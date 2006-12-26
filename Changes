@@ -1,0 +1,6 @@
+Revision history for Perl extension Image::Pngslimmer.
+
+0.01  Fri Dec 22 21:08:01 2006
+	- original version; created by h2xs 1.23 with options
+		-XA -n Image::Pngslimmer
+

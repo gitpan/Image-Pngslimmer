@@ -1,0 +1,12 @@
+Changes
+Makefile.PL
+MANIFEST
+README
+t/Image-Pngslimmer.t
+t/01-ispng.t
+t/02-slimnoncrit.t
+t/03-analyze.t
+t/test1.gif
+t/test1.png
+lib/Image/Pngslimmer.pm
+META.yml                                 Module meta-data (added by MakeMaker)

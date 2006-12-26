@@ -1,0 +1,51 @@
+Image::Pngslimmer version 0.01
+=============================
+
+OVERVIEW
+
+Image::Pngslimmer reduces the size of PNGs by removing non-critcal chunks.
+
+Other tools, such as pngcrush (http://pmt.sourceforge.net/pngcrush/) 
+will deliver (much) better results for static PNGs and Image::Pnglimmer 
+is specifically designed for dynamically created PNGs.
+
+use Image::Pngslimmer
+
+Image::Pngslimmer::ispng($blob) - returns 1 if the BLOB conforms to the basic
+structure for a PNG
+
+Image::Pngslimmer::discard_noncritical($blob) - returns a BLOB stripped of any
+non-critcal chunks. If the passed-in BLOB does not conform to the basic structure
+of a PNG the returned BLOB is identical to the passed-in BLOB.
+
+Image::Pngslimmer::analyze($blob) - after calling Image::Pngslimmer::ispng($blob)
+this will iterate through the chunks in the supplied byte stream represented by 
+$blob and return an array of strings describing the chunks in the PNG. It can be
+useful for testing the "before and after" effect of discard_noncritical($blob).
+
+
+INSTALLATION
+
+To install this module type the following:
+
+   perl Makefile.PL
+   make
+   make test
+   make install
+
+DEPENDENCIES
+
+
+There are currently no dependencies for Pngslimmer
+  
+
+COPYRIGHT AND LICENCE
+
+
+Copyright (C) 2006 by Adrian McMenamin <adrian AT newgolddream DOT info>
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself, either Perl version 5.8.4 or,
+at your option, any later version of Perl 5 you may have available.
+
+
