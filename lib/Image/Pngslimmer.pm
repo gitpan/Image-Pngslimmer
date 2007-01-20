@@ -25,7 +25,7 @@ our @EXPORT = qw(
 	
 );
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 
 
@@ -144,7 +144,6 @@ sub analyze {
 
 1;
 __END__
-# Below is stub documentation for your module. You'd better edit it!
 
 
 =pod
@@ -155,8 +154,8 @@ Image::Pngslimmer - slims (dynamically created) PNGs
 
 =head1 SYNOPSIS
 
-	ispng($blob)				#is this a PNG?
-	discard_noncritical($blob)  		#discard non critcal chunks
+	$ping = ispng($blob)			#is this a PNG? $ping == 1 if it is
+	$newblob = discard_noncritical($blob)  	#discard non critcal chunks and return a new PNG
 	my @chunklist = analyze($blob) 		#get the chunklist as an array
 
 =head1 DESCRIPTION

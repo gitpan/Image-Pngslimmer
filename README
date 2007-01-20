@@ -1,4 +1,4 @@
-Image::Pngslimmer version 0.01
+Image::Pngslimmer version 0.02
 =============================
 
 OVERVIEW
@@ -16,7 +16,8 @@ structure for a PNG
 
 Image::Pngslimmer::discard_noncritical($blob) - returns a BLOB stripped of any
 non-critcal chunks. If the passed-in BLOB does not conform to the basic structure
-of a PNG the returned BLOB is identical to the passed-in BLOB.
+of a PNG the returned BLOB is identical to the passed-in BLOB. The passed in BLOB
+is not altered by this function.
 
 Image::Pngslimmer::analyze($blob) - after calling Image::Pngslimmer::ispng($blob)
 this will iterate through the chunks in the supplied byte stream represented by 
@@ -42,7 +43,7 @@ There are currently no dependencies for Pngslimmer
 COPYRIGHT AND LICENCE
 
 
-Copyright (C) 2006 by Adrian McMenamin <adrian AT newgolddream DOT info>
+Copyright (C) 2006, 2007 by Adrian McMenamin <adrian AT newgolddream DOT info>
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.8.4 or,
