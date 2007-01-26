@@ -11,8 +11,8 @@ is specifically designed for dynamically created PNGs.
 
 use Image::Pngslimmer
 
-Image::Pngslimmer::ispng($blob) - returns 1 if the BLOB conforms to the basic
-structure for a PNG
+Image::Pngslimmer::ispng($blob) - returns 1 if the BLOB conforms to the
+structure for a PNG and that all CRCs are correct.
 
 Image::Pngslimmer::discard_noncritical($blob) - returns a BLOB stripped of any
 non-critcal chunks. If the passed-in BLOB does not conform to the basic structure
@@ -37,7 +37,7 @@ To install this module type the following:
 DEPENDENCIES
 
 
-There are currently no dependencies for Pngslimmer
+String::CRC32 is required from version 0.03 onwards
   
 
 COPYRIGHT AND LICENCE
