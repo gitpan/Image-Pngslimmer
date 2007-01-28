@@ -26,7 +26,7 @@ our @EXPORT = qw(
 	
 );
 
-our $VERSION = '0.03';
+our $VERSION = '0.04';
 
 sub checkcrc {
 	my $chunk = shift;
@@ -203,13 +203,22 @@ discard_noncritical($blob) will call ispng($blob) before attempting to manipulat
 supplied stream of bytes - hopefully, therefore, avoiding the accidental mangling of 
 JPEGs or other files. ispng checks for PNG definition conformity -
 it looks for a correct signature, an image header (IHDR) chunk in the right place, looks
-for (but does not check in any way) an image data (IDAT) chunk and checks there is an
-end (IEND) chunk in the right place. From version 0.03 onwards ispng also checks CRC
+for (but does not check beyond CRC values) an image data (IDAT) chunk and checks there is an
+end (IEND) chunk in the right place. Versions earlier than 0.03 do not check CRC
 values.
 
 analyze($blob) is supplied for completeness and to aid debugging. It is not called by 
 discard_noncritical but may be used to show 'before-and-after' to demonstrate the savings
 delivered by discard_noncritical.
+
+=head1 REQUIRES
+
+	String::CRC32
+
+=head1 LICENCE AND COPYRIGHT
+
+This code is free software is licenced under the same terms as perl itself. It is copyright Adrian McMenamin,
+2006, 2007.
 
 =head1 TODO
 
@@ -222,7 +231,7 @@ and paletize true colour PNGs. I am working on it!
 
 =head1 SEE ALSO
 
-	L<Image::Magick>
+	<Image::Magick>
 
 
 =cut
