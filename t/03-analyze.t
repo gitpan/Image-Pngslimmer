@@ -17,7 +17,7 @@ $weightloss = $fatel - $slimel;
 print "Fat file had $fatel chunks, slimmed file has $slimel chunks, saving $weightloss chunks\n";
 print "Fat file details:\n";
 print Image::Pngslimmer::analyze($blob1);
-print "\nSimmed file details:\n";
+print "\nSlimmed file details:\n";
 print Image::Pngslimmer::analyze($blob2);
 ok($weightloss > 0);
 

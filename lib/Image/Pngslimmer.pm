@@ -3,7 +3,8 @@ package Image::Pngslimmer;
 use 5.008004;
 use strict;
 use warnings;
-use String::CRC32;
+use String::CRC32();
+use Compress::Zlib;
 
 require Exporter;
 
@@ -26,7 +27,7 @@ our @EXPORT = qw(
 	
 );
 
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 
 sub checkcrc {
 	my $chunk = shift;
@@ -34,7 +35,7 @@ sub checkcrc {
 	#get length of data
 	$chunklength = unpack("N", substr($chunk, 0, 4));
 	$subtocheck = substr($chunk, 4, $chunklength + 4);
-	$generatedcrc = crc32($subtocheck);
+	$generatedcrc = String::CRC32::crc32($subtocheck);
 	$readcrc = unpack("N", substr($chunk, $chunklength + 8, 4));
 	if ($generatedcrc eq $readcrc) {return 1;}
 	#don't match
@@ -50,7 +51,6 @@ sub ispng {
 	if ($startpng ne $pngsig) { 
 		return 0;
 	 }
-
  	#check for IHDR
 	if (substr($blob, 12, 4) ne "IHDR") {
 		return 0;
@@ -90,6 +90,78 @@ sub ispng {
 
 	return 1;
 }
+
+sub crushdatachunk {
+	#TO DO: Currently only works for single IDAT chunk - FIX ME
+	#look to inner stream, uncompress that, then recompress
+	my ($chunkin, $datalength, $puredata, $chunkout, $crusheddata, $y, $purecrc);
+	$chunkin = shift;
+	$datalength = unpack("N", substr($chunkin, 0, 4));
+	$puredata = substr($chunkin, 10, $datalength - 6);
+	my $purelen = length($puredata);
+	$purecrc = unpack("N", substr($chunkin, $purelen + 10, 4));
+	my $rawlength = length($puredata);
+	my $x = inflateInit(-WindowBits => -MAX_WBITS)
+		or return $chunkin;
+	my ($output, $status);
+	$output = $x->inflate($puredata);
+	$status = length($output);
+	my $complen = $datalength - 6;
+	return $chunkin unless $output;
+	#check the CRCs match
+	my $uncompcrc = adler32($output);
+	if ($uncompcrc ne $purecrc){ return $chunkin;}
+	# now crush it at the maximum level
+	($y, $status) = deflateInit(-Level => Z_BEST_COMPRESSION, -WindowBits => -MAX_WBITS, -Strategy => Z_FILTERED);
+	return $chunkin unless $y;
+	($crusheddata, $status) = $y->deflate($output);
+	return $chunkin unless ($status == Z_OK);
+	($crusheddata, $status) = $y->flush();
+	return $chunkin unless $crusheddata;
+	#should we go any further?
+	my $newlength = length($crusheddata) + 6;
+	return $chunkin unless (($newlength) < $rawlength);
+	#now we have compressed the data, write the chunk
+	$chunkout = pack("N", $newlength);
+	my $rfc1950stuff = pack("C2", (0x48,0x0D)); 
+	$output = "IDAT".$rfc1950stuff.$crusheddata.pack("N", $purecrc);
+	my $outCRC = String::CRC32::crc32($output);
+	$chunkout = $chunkout.$output.pack("N", $outCRC);
+	return $chunkout;
+}
+
+sub zlibshrink {
+	my ($blobin, $blobout, $pnglength, $ihdr_len, $searchindex, $chunktocopy, $chunklength, $processedchunk);
+	$blobin = shift;
+	#find the data chunks
+	#decompress and then recompress
+	#work out the CRC and write it out
+	#but first check it is actually a PNG
+	if (ispng($blobin) < 1) {
+		return undef;
+	}
+	$pnglength = length($blobin);
+	$ihdr_len = unpack("N", substr($blobin, 8, 4));
+	$searchindex =  16 + $ihdr_len + 4 + 4;
+	#copy the start of the incoming blob
+	$blobout = substr($blobin, 0, 16 + $ihdr_len + 4);
+	while ($searchindex < ($pnglength - 4)) {
+		#Copy the chunk
+		$chunklength = unpack("N", substr($blobin, $searchindex - 4, 4));
+		$chunktocopy = substr($blobin, $searchindex - 4, $chunklength + 12);
+		if (substr($blobin, $searchindex, 4) eq "IDAT") {
+			$processedchunk = crushdatachunk($chunktocopy);
+			my ($x, $y);
+			$x = length($processedchunk);
+			$y = length($chunktocopy);
+			if (length($processedchunk) < length($chunktocopy)) {$chunktocopy = $processedchunk;}
+		}
+		$blobout = $blobout.$chunktocopy;
+		$searchindex += $chunklength + 12;
+	}
+	return $blobout;
+}
+	
 
 sub discard_noncritical {
 	my ($blob, $cleanblob, $searchindex, $pnglength, $chunktext, $nextindex);
@@ -182,6 +254,7 @@ Image::Pngslimmer - slims (dynamically created) PNGs
 	$ping = ispng($blob)			#is this a PNG? $ping == 1 if it is
 	$newblob = discard_noncritical($blob)  	#discard non critcal chunks and return a new PNG
 	my @chunklist = analyze($blob) 		#get the chunklist as an array
+	$newblob = zlibshrink($blob)		#attempt to better compress the PNG
 	
 
 =head1 DESCRIPTION
@@ -203,27 +276,24 @@ discard_noncritical($blob) will call ispng($blob) before attempting to manipulat
 supplied stream of bytes - hopefully, therefore, avoiding the accidental mangling of 
 JPEGs or other files. ispng checks for PNG definition conformity -
 it looks for a correct signature, an image header (IHDR) chunk in the right place, looks
-for (but does not check beyond CRC values) an image data (IDAT) chunk and checks there is an
-end (IEND) chunk in the right place. Versions earlier than 0.03 do not check CRC
+for (but does not check in any way) an image data (IDAT) chunk and checks there is an
+end (IEND) chunk in the right place. From version 0.03 onwards ispng also checks CRC
 values.
 
 analyze($blob) is supplied for completeness and to aid debugging. It is not called by 
 discard_noncritical but may be used to show 'before-and-after' to demonstrate the savings
 delivered by discard_noncritical.
 
-=head1 REQUIRES
-
-	String::CRC32
-
-=head1 LICENCE AND COPYRIGHT
-
-This code is free software is licenced under the same terms as perl itself. It is copyright Adrian McMenamin,
-2006, 2007.
+zlibshrink($blob) will attempt to better compress the supplied PNG and will achieve good results
+with smallish (ie with only one IDAT chunk) but poorly compressed PNGs.
 
 =head1 TODO
 
 To make Pngslimmer really useful it needs to construct grayscale PNGs from coloured PNGs
 and paletize true colour PNGs. I am working on it!
+
+zlibshrink - introduced in version 0.05 - needs to be made to work with PNGs with more than one
+IDAT chunk
 
 =head1 AUTHOR
 
@@ -231,7 +301,7 @@ and paletize true colour PNGs. I am working on it!
 
 =head1 SEE ALSO
 
-	<Image::Magick>
+	Image::Magick
 
 
 =cut
