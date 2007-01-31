@@ -27,7 +27,7 @@ our @EXPORT = qw(
 	
 );
 
-our $VERSION = '0.05';
+our $VERSION = '0.06';
 
 sub checkcrc {
 	my $chunk = shift;
@@ -112,7 +112,7 @@ sub crushdatachunk {
 	my $uncompcrc = adler32($output);
 	if ($uncompcrc ne $purecrc){ return $chunkin;}
 	# now crush it at the maximum level
-	($y, $status) = deflateInit(-Level => Z_BEST_COMPRESSION, -WindowBits => -MAX_WBITS, -Strategy => Z_FILTERED);
+	($y, $status) = deflateInit(-Level => Z_BEST_COMPRESSION, -WindowBits => -MAX_WBITS);
 	return $chunkin unless $y;
 	($crusheddata, $status) = $y->deflate($output);
 	return $chunkin unless ($status == Z_OK);
@@ -123,7 +123,7 @@ sub crushdatachunk {
 	return $chunkin unless (($newlength) < $rawlength);
 	#now we have compressed the data, write the chunk
 	$chunkout = pack("N", $newlength);
-	my $rfc1950stuff = pack("C2", (0x48,0x0D)); 
+	my $rfc1950stuff = pack("C2", (0x48,0xC7)); 
 	$output = "IDAT".$rfc1950stuff.$crusheddata.pack("N", $purecrc);
 	my $outCRC = String::CRC32::crc32($output);
 	$chunkout = $chunkout.$output.pack("N", $outCRC);
@@ -286,6 +286,17 @@ delivered by discard_noncritical.
 
 zlibshrink($blob) will attempt to better compress the supplied PNG and will achieve good results
 with smallish (ie with only one IDAT chunk) but poorly compressed PNGs.
+
+=head1 LICENCE AND COPYRIGHT
+
+This is free software and is licenced under the same terms as Perl itself ie Artistic and GPL
+
+It is copyright (c) Adrian McMenamin, 2006, 2007
+
+=head1 REQUIREMENTS
+
+	String::CRC32
+	Compress::Zlib
 
 =head1 TODO
 
