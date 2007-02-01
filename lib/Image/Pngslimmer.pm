@@ -27,7 +27,7 @@ our @EXPORT = qw(
 	
 );
 
-our $VERSION = '0.06';
+our $VERSION = '0.07';
 
 sub checkcrc {
 	my $chunk = shift;
@@ -91,6 +91,22 @@ sub ispng {
 	return 1;
 }
 
+sub shrinkchunk {
+	my ($blobin, $blobout, $strategy, $status, $y);
+	$blobin = shift;
+	$strategy = shift;
+	if ($strategy eq "Z_FILTERED")	{($y, $status) = deflateInit(-Level => Z_BEST_COMPRESSION, -WindowBits=> -MAX_WBITS, -Bufsize=> 0x8000, -Strategy=>Z_FILTERED);}
+	else { ($y, $status) = deflateInit(-Level => Z_BEST_COMPRESSION, -WindowBits=> -MAX_WBITS, -Bufsize=> 0x8000);}
+	return $blobin unless ($status == Z_OK);
+	($blobout, $status) = $y->deflate($blobin);
+	return $blobin unless ($status == Z_OK);
+	($blobout, $status) = $y->flush();
+	return $blobin unless ($status == Z_OK);
+	return $blobout;
+}
+	
+	
+
 sub crushdatachunk {
 	#TO DO: Currently only works for single IDAT chunk - FIX ME
 	#look to inner stream, uncompress that, then recompress
@@ -98,32 +114,26 @@ sub crushdatachunk {
 	$chunkin = shift;
 	$datalength = unpack("N", substr($chunkin, 0, 4));
 	$puredata = substr($chunkin, 10, $datalength - 6);
-	my $purelen = length($puredata);
-	$purecrc = unpack("N", substr($chunkin, $purelen + 10, 4));
 	my $rawlength = length($puredata);
+	$purecrc = unpack("N", substr($chunkin, $rawlength + 10, 4));
 	my $x = inflateInit(-WindowBits => -MAX_WBITS)
 		or return $chunkin;
 	my ($output, $status);
 	$output = $x->inflate($puredata);
-	$status = length($output);
 	my $complen = $datalength - 6;
 	return $chunkin unless $output;
 	#check the CRCs match
 	my $uncompcrc = adler32($output);
 	if ($uncompcrc ne $purecrc){ return $chunkin;}
 	# now crush it at the maximum level
-	($y, $status) = deflateInit(-Level => Z_BEST_COMPRESSION, -WindowBits => -MAX_WBITS);
-	return $chunkin unless $y;
-	($crusheddata, $status) = $y->deflate($output);
-	return $chunkin unless ($status == Z_OK);
-	($crusheddata, $status) = $y->flush();
-	return $chunkin unless $crusheddata;
+	$crusheddata = shrinkchunk($output, Z_FILTERED);
+	unless (length($crusheddata) < $rawlength) {$crusheddata = shrinkchunk($output, Z_DEFAULT_STRATEGY);}
 	#should we go any further?
 	my $newlength = length($crusheddata) + 6;
 	return $chunkin unless (($newlength) < $rawlength);
 	#now we have compressed the data, write the chunk
 	$chunkout = pack("N", $newlength);
-	my $rfc1950stuff = pack("C2", (0x48,0xC7)); 
+	my $rfc1950stuff = pack("C2", (0x78,0xDA)); 
 	$output = "IDAT".$rfc1950stuff.$crusheddata.pack("N", $purecrc);
 	my $outCRC = String::CRC32::crc32($output);
 	$chunkout = $chunkout.$output.pack("N", $outCRC);

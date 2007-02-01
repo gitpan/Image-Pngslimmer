@@ -1,5 +1,11 @@
 Revision history for Perl extension Image::Pngslimmer.
 
+0.07  Thu Feb 01 21:30:00
+	- further changes to compression code
+
+0.06  Tue Jan 30 23:30:00
+	- changes to deflate code
+
 0.05  Mon Jan 29 00:00:09
 	- simple zlib compression supported
 
