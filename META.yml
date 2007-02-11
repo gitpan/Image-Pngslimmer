@@ -1,12 +1,12 @@
 # http://module-build.sourceforge.net/META-spec.html
 #XXXXXXX This is a prototype!!!  It will change in the future!!! XXXXX#
 name:         Image-Pngslimmer
-version:      0.07
+version:      0.08
 version_from: lib/Image/Pngslimmer.pm
 installdirs:  site
 requires:
     Compress::Zlib:                2.003
-    String::CRC32:                 1.4
+    POSIX:                         1.08
 
 distribution_type: module
 generated_by: ExtUtils::MakeMaker version 6.17

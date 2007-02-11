@@ -3,8 +3,8 @@ package Image::Pngslimmer;
 use 5.008004;
 use strict;
 use warnings;
-use String::CRC32();
 use Compress::Zlib;
+use POSIX;
 
 require Exporter;
 
@@ -27,7 +27,7 @@ our @EXPORT = qw(
 	
 );
 
-our $VERSION = '0.07';
+our $VERSION = '0.08';
 
 sub checkcrc {
 	my $chunk = shift;
@@ -35,7 +35,7 @@ sub checkcrc {
 	#get length of data
 	$chunklength = unpack("N", substr($chunk, 0, 4));
 	$subtocheck = substr($chunk, 4, $chunklength + 4);
-	$generatedcrc = String::CRC32::crc32($subtocheck);
+	$generatedcrc = crc32($subtocheck);
 	$readcrc = unpack("N", substr($chunk, $chunklength + 8, 4));
 	if ($generatedcrc eq $readcrc) {return 1;}
 	#don't match
@@ -95,8 +95,8 @@ sub shrinkchunk {
 	my ($blobin, $blobout, $strategy, $status, $y);
 	$blobin = shift;
 	$strategy = shift;
-	if ($strategy eq "Z_FILTERED")	{($y, $status) = deflateInit(-Level => Z_BEST_COMPRESSION, -WindowBits=> -MAX_WBITS, -Bufsize=> 0x8000, -Strategy=>Z_FILTERED);}
-	else { ($y, $status) = deflateInit(-Level => Z_BEST_COMPRESSION, -WindowBits=> -MAX_WBITS, -Bufsize=> 0x8000);}
+	if ($strategy eq "Z_FILTERED")	{($y, $status) = deflateInit(-Level => Z_BEST_COMPRESSION, -WindowBits=> -MAX_WBITS, -Bufsize=> 0x1000, -Strategy=>Z_FILTERED);}
+	else { ($y, $status) = deflateInit(-Level => Z_BEST_COMPRESSION, -WindowBits=> -MAX_WBITS, -Bufsize=> 0x1000);}
 	return $blobin unless ($status == Z_OK);
 	($blobout, $status) = $y->deflate($blobin);
 	return $blobin unless ($status == Z_OK);
@@ -135,7 +135,7 @@ sub crushdatachunk {
 	$chunkout = pack("N", $newlength);
 	my $rfc1950stuff = pack("C2", (0x78,0xDA)); 
 	$output = "IDAT".$rfc1950stuff.$crusheddata.pack("N", $purecrc);
-	my $outCRC = String::CRC32::crc32($output);
+	my $outCRC = crc32($output);
 	$chunkout = $chunkout.$output.pack("N", $outCRC);
 	return $chunkout;
 }
@@ -171,7 +171,337 @@ sub zlibshrink {
 	}
 	return $blobout;
 }
+
+sub getuncompressed_data {
+	my $blobin = shift;
+	my $pnglength = length($blobin);
+	my $searchindex = 8 + 25; #start looking at the end of the IHDR
+	while ($searchindex < ($pnglength - 8)) {
+		my $chunklength = unpack("N", substr($blobin, $searchindex, 4));
+		if (substr($blobin, $searchindex + 4, 4) eq "IDAT") {
+			#get the data
+			my $puredata = substr($blobin, $searchindex + 10, $chunklength - 6); #just the rfc1951 data
+			my $uncompcrc = unpack("N", substr($blobin, $searchindex + 8 + $chunklength - 4)); #adler crc for uncompressed data
+			#now uncompress it
+			my $x = inflateInit(-WindowBits => -MAX_WBITS)
+					or return undef;
+			my ($output, $status);
+			($output, $status) = $x->inflate($puredata);
+			return undef unless $output;
+			my $calc_crc = adler32($output);
+			if ($calc_crc != $uncompcrc) {
+				return undef;}
+			# FIX ME - what if there is more than one IDAT? #
+			return $output; # done 
+		}
+		$searchindex += $chunklength + 12;
+	}
+	return undef;
+}
+
+sub linebyline {
+	#analyze the data line by line
+	my ($data, $ihdr)= @_;
+	my %ihdr = %{$ihdr};
+	my $width = $ihdr{"imagewidth"};
+	my $height = $ihdr{"imageheight"};
+	my $depth = $ihdr{"bitdepth"};
+	my $colourtype = $ihdr{"colourtype"};
+	if ($colourtype != 2) {
+		return -1;
+	}
+	if ($depth != 8) {
+		return -1;
+		}
+	my $count = 0;
+	my $return_filtered = 1;
+	#print "Height is $height\n";
+	while ($count < $height) {
+		my $filtertype = unpack("C1", substr($data, $count * $width * 3 + $count, 1));
+		if ($filtertype != 0) {$return_filtered = -1} #already filtered
+		$count++;
+	}
+	return $return_filtered; #can be filtered?
+}
+
+sub comp_width {
+	my ($ihdr, %ihdr);
+	$ihdr = shift;
+	%ihdr = %{$ihdr};
+	my $lines = $ihdr{"imageheight"};
+	my $pixels = $ihdr{"imagewidth"};
+	my $comp_width = 3;
+	my $ctype = $ihdr{"colourtype"};
+	my $bdepth = $ihdr{"bitdepth"};
+	if ($ctype == 2) { #truecolour with no alpha
+		if ($bdepth == 8) {$comp_width = 3;}
+		else {$comp_width = 6;}
+	}
+	elsif (($ctype == 0)&&($bdepth == 16)) {$comp_width = 2;} #16bit grayscale
+	elsif ($ctype == 4) { #grayscale with alpha
+		if ($bdepth == 8) {$comp_width = 2;}
+		else {$comp_width = 3;}
+	}
+	elsif ($ctype == 6) { #truecolour with alpha
+		if ($bdepth == 8) {$comp_width = 4;}
+		else {$comp_width = 7;}
+	}
+
+	return $comp_width;
+}
+
+sub filter_sub {
+	#filter data schunk using Sub type
+	#http://www.w3.org/TR/PNG/#9Filters
+	#Filt(x) = Orig(x) - Orig(a)
+	#x is byte to be filtered, a is byte to left
+	my($origbyte, $leftbyte, $newbyte, $ihdr, $unfiltereddata, $filtereddata);
+	$unfiltereddata = shift;
+	$ihdr = shift;
+	my %ihdr = %{$ihdr};
+	my $count = 0;
+	my $count_width = 0;
+	$newbyte = 0;
+	my $comp_width=comp_width(\%ihdr);
+	my $totalwidth = $ihdr{"imagewidth"} * $comp_width;
+	$filtereddata = "";
+	my $lines = $ihdr{"imageheight"};
+	while ($count < $lines) {
+		#start - add filtertype byte
+		$filtereddata = $filtereddata."\1";
+		while ($count_width < $totalwidth ) {
+			$origbyte = unpack("C", substr($unfiltereddata, 1 + ($count * $totalwidth)  + $count_width + $count, 1));
+			if ($count_width < $comp_width) {
+				$leftbyte = 0;
+			}
+			else{	
+				$leftbyte =  unpack("C", substr($unfiltereddata, 1 + $count + ($count * $totalwidth)  + $count_width - $comp_width, 1));
+			}
+			$newbyte = ($origbyte - $leftbyte)%256;
+			$filtereddata = $filtereddata.pack("C", $newbyte);
+			$count_width++;
+		}
+		$count_width = 0;
+		$count++;
+	}
+	return $filtereddata;
+}
+
+
+sub filter_up {
+	#filter data schunk using Up type
+	my($origbyte, $upbyte, $newbyte, $ihdr, $unfiltereddata, $filtereddata);
+	$unfiltereddata = shift;
+	$ihdr = shift;
+	my %ihdr = %{$ihdr};
+	my $comp_width = comp_width(\%ihdr);
+	my $count = 0;
+	my $count_width = 0;
+	$newbyte = 0;
+	my $totalwidth = $ihdr{"imagewidth"} * $comp_width;
+	$filtereddata = "";
+	my $lines = $ihdr{"imageheight"};
+	while ($count < $lines) {
+		#start - add filtertype byte
+		$filtereddata = $filtereddata."\2";
+		while ($count_width < $totalwidth ) {
+			$origbyte = unpack("C", substr($unfiltereddata, 1 + ($count * $totalwidth)  + $count_width + $count, 1));
+			if ($count == 0) {
+				$upbyte = 0;
+			}
+			else{	
+				$upbyte =  unpack("C", substr($unfiltereddata, $count + (($count - 1) * $totalwidth)  + $count_width, 1));
+			}
+			$newbyte = ($origbyte - $upbyte)%256;
+			$filtereddata = $filtereddata.pack("C", $newbyte);
+			$count_width++;
+		}
+		$count_width = 0;
+		$count++;
+	}
+	return $filtereddata;
+}
+
+
+sub filter_ave {
+	#filter data schunk using Ave type
+	my($origbyte, $avebyte, $newbyte, $ihdr, $unfiltereddata, $filtereddata, $top_predictor, $left_predictor);
+	$unfiltereddata = shift;
+	$ihdr = shift;
+	my %ihdr = %{$ihdr};
+	my $comp_width = comp_width(\%ihdr);
+	my $count = 0;
+	my $count_width = 0;
+	$newbyte = 0;
+	my $totalwidth = $ihdr{"imagewidth"} * $comp_width;
+	$filtereddata = "";
+	my $lines = $ihdr{"imageheight"};
+	while ($count < $lines) {
+		#start - add filtertype byte
+		$filtereddata = $filtereddata."\3";
+		while ($count_width < $totalwidth ) {
+			$origbyte = unpack("C", substr($unfiltereddata, 1 + ($count * $totalwidth)  + $count_width + $count, 1));
+			if ($count > 0) {
+				$top_predictor = unpack("C", substr($unfiltereddata, $count + (($count - 1) * $totalwidth)  + $count_width, 1));
+			}
+			else {$top_predictor = 0;}
+			if ($count_width >= $comp_width) {
+				$left_predictor =  unpack("C", substr($unfiltereddata, 1 + $count + ($count * $totalwidth)  + $count_width - $comp_width, 1));
+			}
+			else {
+				$left_predictor = 0;
+			}
+			$avebyte =  ($top_predictor + $left_predictor)/2;
+			$avebyte = floor($avebyte);
+			$newbyte = ($origbyte - $avebyte)%256;
+			$filtereddata = $filtereddata.pack("C", $newbyte);
+			$count_width++;
+		}
+		$count_width = 0;
+		$count++;
+	}
+	return $filtereddata;
+}
+			
+
+			
 	
+sub filterdata {
+	my ($unfiltereddata, $ihdr, $filtereddata, $finalfiltered, $filtered_sub, $filtered_up, $filtered_ave);
+	$unfiltereddata = shift;
+	$ihdr = shift;
+	my %ihdr = %{$ihdr};
+	$filtered_sub = filter_sub($unfiltereddata, \%ihdr);
+	$filtered_up = filter_up($unfiltereddata, \%ihdr);
+	$filtered_ave = filter_ave($unfiltereddata, \%ihdr);
+	
+	#TO DO: Try other filters and pick best one
+	my $pixels = $ihdr{"imagewidth"};
+	my $rows = $ihdr{"imageheight"};
+	my $comp_width = comp_width(\%ihdr);
+	my $bytesperline = $pixels * $comp_width;
+	my $countout = 0;
+	my $rows_done = 0;
+	my $count_sub = 0;
+	my $count_up = 0;
+	my $count_ave = 0;
+	my $count_zero = 0;
+	while ($rows_done < $rows)
+	{
+		while (($countout) < $bytesperline)
+		{	
+			$count_sub += unpack("c", substr($filtered_sub, 1 + ($rows_done * $bytesperline) + $countout + $rows_done, 1));
+			$count_up += unpack("c", substr($filtered_up, 1 + ($rows_done * $bytesperline) + $countout + $rows_done, 1));
+			$count_ave += unpack("c", substr($filtered_ave, 1 + ($rows_done * $bytesperline) + $countout + $rows_done, 1));;
+			$count_zero += unpack("c", substr($unfiltereddata, 1 + ($rows_done * $bytesperline) + $countout + $rows_done, 1));
+			$countout++;
+		}
+	   	if (($count_ave < $count_zero)&&($count_ave < $count_sub)&&($count_ave < $count_up))
+		{
+			$finalfiltered = $finalfiltered.substr($filtered_ave, $rows_done + $rows_done * $bytesperline, $bytesperline + 1);
+		}
+		else {
+			if ($count_sub <= $count_up) {
+				if ($count_sub <= $count_zero) {
+					$finalfiltered = $finalfiltered.substr($filtered_sub, $rows_done + $rows_done * $bytesperline, $bytesperline + 1);
+				}
+				else {
+					$finalfiltered = $finalfiltered.substr($unfiltereddata, $rows_done + $rows_done * $bytesperline, $bytesperline + 1);
+				}
+			}
+			else {
+				if ($count_zero >= $count_up) {
+					$finalfiltered = $finalfiltered.substr($filtered_up, $rows_done + $rows_done  * $bytesperline, $bytesperline + 1);
+				}
+				else {
+					$finalfiltered = $finalfiltered.substr($unfiltereddata, $rows_done + $rows_done * $bytesperline, $bytesperline + 1);
+				}
+			}
+		}
+		$countout = 0;
+		$count_up = 0;
+		$count_sub = 0;
+		$count_zero = 0;
+		$count_ave = 0;
+		$rows_done++;
+	}
+	return $finalfiltered;
+	
+}
+
+sub getihdr {
+	my ($blobin, %ihdr);
+	$blobin = shift;
+	$ihdr{"imagewidth"} = unpack("N", substr($blobin, 16, 4));
+	$ihdr{"imageheight"} = unpack("N", substr($blobin, 20, 4));
+	$ihdr{"bitdepth"} = unpack("C", substr($blobin, 24, 1));
+	$ihdr{"colourtype"} = unpack("C", substr($blobin, 25, 1));
+        $ihdr{"compression"} = unpack("C", substr($blobin, 26, 1));
+	$ihdr{"filter"} = unpack("C", substr($blobin, 27, 1));
+	$ihdr{"interlace"} = unpack("C", substr($blobin, 28, 1));
+	return \%ihdr;
+}
+	
+sub filter {
+ 	my ($blobin, $filtereddata);
+	#decompress image and examine scanlines
+	$blobin = shift;
+	#basic check so we do not waste our time
+	if (ispng($blobin) < 1) {
+		return undef;
+	}
+	#read some basic info about the PNG
+	my $ihdr = getihdr($blobin);
+	my %ihdr = %{$ihdr};
+	if ($ihdr{"colourtype"} == 3) { return $blobin } #already palettized
+	if ($ihdr{"bitdepth"} < 8) { return $blobin; } # colour depth is so low it's not worth it
+	if ($ihdr{"compression"} != 0) {return $blobin;} # non-standard compression
+	if ($ihdr{"filter"} != 0) {return $blobin; } # non-standard filtering
+
+	if ($ihdr{"interlace"} != 0) {
+		#FIX ME: support interlacing
+		return $blobin;
+	}
+	my $datachunk = getuncompressed_data($blobin);
+	return $blobin unless $datachunk;;
+	my $canfilter = linebyline($datachunk, \%ihdr);
+	if ($canfilter > 0)
+	{
+		$filtereddata = filterdata($datachunk, \%ihdr);
+	
+	}
+	else {return $blobin;}
+        #Now stick the uncompressed data into a chunk
+	#and return - leaving the compression to a different process
+        my $filteredcrc = adler32($filtereddata);
+	$filtereddata = shrinkchunk($filtereddata, Z_FILTERED);
+	my $filterlen = length($filtereddata);
+	#now push the data into the PNG
+        my $pnglength = length($blobin);
+        my $ihdr_len = unpack("N", substr($blobin, 8, 4));
+        my $searchindex =  16 + $ihdr_len + 4 + 4;
+        #copy the start of the incoming blob
+        my $blobout = substr($blobin, 0, 16 + $ihdr_len + 4);
+        while ($searchindex < ($pnglength - 4)) {
+	        #Copy the chunk
+                my $chunklength = unpack("N", substr($blobin, $searchindex - 4, 4));
+                my $chunktocopy = substr($blobin, $searchindex - 4, $chunklength + 12);
+                if (substr($blobin, $searchindex, 4) eq "IDAT") {
+			my $rfc1950stuff = pack("C2", (0x78, 0xDA));
+			my $output = "IDAT".$rfc1950stuff.$filtereddata.pack("N", $filteredcrc);
+			my $newlength = $filterlen + 6;
+			my $outCRC = crc32($output);
+			my $processedchunk = pack("N", $newlength).$output.pack("N", $outCRC);
+			$chunktocopy = $processedchunk;
+                }
+                $blobout = $blobout.$chunktocopy;
+                $searchindex += $chunklength + 12;
+	}
+        return $blobout;
+}
+
+	
+
 
 sub discard_noncritical {
 	my ($blob, $cleanblob, $searchindex, $pnglength, $chunktext, $nextindex);
@@ -265,6 +595,7 @@ Image::Pngslimmer - slims (dynamically created) PNGs
 	$newblob = discard_noncritical($blob)  	#discard non critcal chunks and return a new PNG
 	my @chunklist = analyze($blob) 		#get the chunklist as an array
 	$newblob = zlibshrink($blob)		#attempt to better compress the PNG
+	$newblob = filter($blob)		#apply adaptive filtering and then compress
 	
 
 =head1 DESCRIPTION
@@ -297,6 +628,11 @@ delivered by discard_noncritical.
 zlibshrink($blob) will attempt to better compress the supplied PNG and will achieve good results
 with smallish (ie with only one IDAT chunk) but poorly compressed PNGs.
 
+filter($blob) will attempt to apply some adaptive filtering to the PNG - filtering should deliver
+compression (though the results can be mixed). Currently this code is under development but it does
+work on PNG test images and if filtering is not possible (eg the image has already been filtered),
+then an unchanged image is returned. All PNG compression and filtering is lossless.
+
 =head1 LICENCE AND COPYRIGHT
 
 This is free software and is licenced under the same terms as Perl itself ie Artistic and GPL
@@ -305,7 +641,7 @@ It is copyright (c) Adrian McMenamin, 2006, 2007
 
 =head1 REQUIREMENTS
 
-	String::CRC32
+	POSIX
 	Compress::Zlib
 
 =head1 TODO
@@ -315,6 +651,9 @@ and paletize true colour PNGs. I am working on it!
 
 zlibshrink - introduced in version 0.05 - needs to be made to work with PNGs with more than one
 IDAT chunk
+
+filtering (introduced in version 0.08) needs to work with data over more than one chunk and
+also to implement the Paeth-predictor filter type.
 
 =head1 AUTHOR
 
