@@ -27,7 +27,7 @@ our @EXPORT = qw(
 	
 );
 
-our $VERSION = '0.08';
+our $VERSION = '0.1';
 
 sub checkcrc {
 	my $chunk = shift;
@@ -215,7 +215,6 @@ sub linebyline {
 		}
 	my $count = 0;
 	my $return_filtered = 1;
-	#print "Height is $height\n";
 	while ($count < $height) {
 		my $filtertype = unpack("C1", substr($data, $count * $width * 3 + $count, 1));
 		if ($filtertype != 0) {$return_filtered = -1} #already filtered
@@ -322,7 +321,6 @@ sub filter_up {
 	return $filtereddata;
 }
 
-
 sub filter_ave {
 	#filter data schunk using Ave type
 	my($origbyte, $avebyte, $newbyte, $ihdr, $unfiltereddata, $filtereddata, $top_predictor, $left_predictor);
@@ -363,17 +361,64 @@ sub filter_ave {
 	return $filtereddata;
 }
 			
-
-			
-	
+sub filter_paeth {	#paeth predictor type filtering
+	my ($origbyte, $paethbyte_a, $paethbyte_b, $paethbyte_c, $paeth_p, $paeth_pa, $paeth_pb, $paeth_pc, $paeth_predictor, $unfiltereddata, $filtereddata, $newbyte, $ihdr);
+	$unfiltereddata = shift;
+	$ihdr = shift;
+	my %ihdr = %{$ihdr};
+	my $comp_width = comp_width(\%ihdr);
+	my $count = 0;
+	my $count_width = 0;
+	$newbyte = 0;
+	my $totalwidth = $ihdr{"imagewidth"} * $comp_width;
+	$filtereddata = "";
+	my $lines = $ihdr{"imageheight"};
+	while ($count < $lines) {
+		#start - add filtertype byte
+		$filtereddata = $filtereddata."\4";
+		while ($count_width < $totalwidth) {
+			$origbyte = unpack("C", substr($unfiltereddata, 1 + ($count * $totalwidth)  + $count_width + $count, 1));
+			if ($count > 0) {
+				$paethbyte_b = unpack("C", substr($unfiltereddata, $count + (($count - 1) * $totalwidth)  + $count_width, 1));
+			}
+			else {$paethbyte_b = 0;}
+			if ($count_width >= $comp_width) {
+				$paethbyte_a =  unpack("C", substr($unfiltereddata, 1 + $count + ($count * $totalwidth)  + $count_width - $comp_width, 1));
+			}
+			else {
+				$paethbyte_a = 0;
+			}
+			if (($count_width >= $comp_width)&&($count > 0)) {
+				$paethbyte_c = unpack("C", substr($unfiltereddata, $count + (($count - 1) * $totalwidth)  + $count_width - $comp_width, 1));
+			}
+			else {
+				$paethbyte_c = 0;
+			}
+			$paeth_p = $paethbyte_a + $paethbyte_b - $paethbyte_c;
+			$paeth_pa = abs($paeth_p - $paethbyte_a);
+			$paeth_pb = abs($paeth_p - $paethbyte_b);
+			$paeth_pc = abs($paeth_p - $paethbyte_c);
+			if (($paeth_pa <= $paeth_pb)&&($paeth_pa <= $paeth_pc)) { $paeth_predictor = $paethbyte_a; }
+			elsif ($paeth_pb <= $paeth_pc) {$paeth_predictor = $paethbyte_b; }
+			else {$paeth_predictor = $paethbyte_c;}
+			$newbyte = ($origbyte - $paeth_predictor)%256;
+			$filtereddata = $filtereddata.pack("C", $newbyte);
+			$count_width++;
+		}
+		$count_width = 0;
+		$count++;
+	}
+	return $filtereddata;
+}
 sub filterdata {
-	my ($unfiltereddata, $ihdr, $filtereddata, $finalfiltered, $filtered_sub, $filtered_up, $filtered_ave);
+	my ($unfiltereddata, $ihdr, $filtereddata, $finalfiltered, $filtered_sub, $filtered_up, $filtered_ave, $filtered_paeth);
 	$unfiltereddata = shift;
 	$ihdr = shift;
 	my %ihdr = %{$ihdr};
 	$filtered_sub = filter_sub($unfiltereddata, \%ihdr);
 	$filtered_up = filter_up($unfiltereddata, \%ihdr);
 	$filtered_ave = filter_ave($unfiltereddata, \%ihdr);
+	$filtered_paeth = filter_paeth($unfiltereddata, \%ihdr);
 	
 	#TO DO: Try other filters and pick best one
 	my $pixels = $ihdr{"imagewidth"};
@@ -386,6 +431,7 @@ sub filterdata {
 	my $count_up = 0;
 	my $count_ave = 0;
 	my $count_zero = 0;
+	my $count_paeth = 0;
 	while ($rows_done < $rows)
 	{
 		while (($countout) < $bytesperline)
@@ -394,14 +440,19 @@ sub filterdata {
 			$count_up += unpack("c", substr($filtered_up, 1 + ($rows_done * $bytesperline) + $countout + $rows_done, 1));
 			$count_ave += unpack("c", substr($filtered_ave, 1 + ($rows_done * $bytesperline) + $countout + $rows_done, 1));;
 			$count_zero += unpack("c", substr($unfiltereddata, 1 + ($rows_done * $bytesperline) + $countout + $rows_done, 1));
+			$count_paeth += unpack("c", substr($filtered_paeth, 1 + ($rows_done * $bytesperline) + $countout + $rows_done, 1));
 			$countout++;
 		}
-	   	if (($count_ave < $count_zero)&&($count_ave < $count_sub)&&($count_ave < $count_up))
+		if (($count_paeth <= $count_zero)&&($count_paeth <= $count_sub)&&($count_paeth <= $count_up)&&($count_paeth <= $count_ave))
+		{
+			$finalfiltered = $finalfiltered.substr($filtered_paeth, $rows_done + $rows_done * $bytesperline, $bytesperline + 1);
+		}
+	   	elsif (($count_ave <= $count_zero)&&($count_ave <= $count_sub)&&($count_ave <= $count_up))
 		{
 			$finalfiltered = $finalfiltered.substr($filtered_ave, $rows_done + $rows_done * $bytesperline, $bytesperline + 1);
 		}
 		else {
-			if ($count_sub <= $count_up) {
+		if ($count_sub <= $count_up) {
 				if ($count_sub <= $count_zero) {
 					$finalfiltered = $finalfiltered.substr($filtered_sub, $rows_done + $rows_done * $bytesperline, $bytesperline + 1);
 				}
@@ -652,8 +703,8 @@ and paletize true colour PNGs. I am working on it!
 zlibshrink - introduced in version 0.05 - needs to be made to work with PNGs with more than one
 IDAT chunk
 
-filtering (introduced in version 0.08) needs to work with data over more than one chunk and
-also to implement the Paeth-predictor filter type.
+filtering - with all type implement since version 0.1 needs to work with PNGs with more than
+one IDAT chunk
 
 =head1 AUTHOR
 
