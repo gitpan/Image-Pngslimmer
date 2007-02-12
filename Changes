@@ -1,5 +1,8 @@
 Revision history for Perl extension Image::Pngslimmer.
 
+0.11  Mon Feb 12 19:16:00
+	- filtering heuristic improved
+
 0.1   Mon Feb 12 11:29:00
 	- all filter types supported
 

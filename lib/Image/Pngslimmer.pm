@@ -27,7 +27,7 @@ our @EXPORT = qw(
 	
 );
 
-our $VERSION = '0.1';
+our $VERSION = '0.11';
 
 sub checkcrc {
 	my $chunk = shift;
@@ -438,11 +438,16 @@ sub filterdata {
 		{	
 			$count_sub += unpack("c", substr($filtered_sub, 1 + ($rows_done * $bytesperline) + $countout + $rows_done, 1));
 			$count_up += unpack("c", substr($filtered_up, 1 + ($rows_done * $bytesperline) + $countout + $rows_done, 1));
-			$count_ave += unpack("c", substr($filtered_ave, 1 + ($rows_done * $bytesperline) + $countout + $rows_done, 1));;
+			$count_ave += unpack("c", substr($filtered_ave, 1 + ($rows_done * $bytesperline) + $countout + $rows_done, 1));
 			$count_zero += unpack("c", substr($unfiltereddata, 1 + ($rows_done * $bytesperline) + $countout + $rows_done, 1));
-			$count_paeth += unpack("c", substr($filtered_paeth, 1 + ($rows_done * $bytesperline) + $countout + $rows_done, 1));
+			$count_paeth +=unpack("c", substr($filtered_paeth, 1 + ($rows_done * $bytesperline) + $countout + $rows_done, 1));
 			$countout++;
 		}
+		$count_paeth = abs($count_paeth);
+		$count_zero = abs($count_zero);
+		$count_ave = abs($count_ave);
+		$count_up = abs($count_up);
+		$count_sub = abs($count_sub);
 		if (($count_paeth <= $count_zero)&&($count_paeth <= $count_sub)&&($count_paeth <= $count_up)&&($count_paeth <= $count_ave))
 		{
 			$finalfiltered = $finalfiltered.substr($filtered_paeth, $rows_done + $rows_done * $bytesperline, $bytesperline + 1);
@@ -451,29 +456,24 @@ sub filterdata {
 		{
 			$finalfiltered = $finalfiltered.substr($filtered_ave, $rows_done + $rows_done * $bytesperline, $bytesperline + 1);
 		}
-		else {
-		if ($count_sub <= $count_up) {
-				if ($count_sub <= $count_zero) {
-					$finalfiltered = $finalfiltered.substr($filtered_sub, $rows_done + $rows_done * $bytesperline, $bytesperline + 1);
-				}
-				else {
-					$finalfiltered = $finalfiltered.substr($unfiltereddata, $rows_done + $rows_done * $bytesperline, $bytesperline + 1);
-				}
-			}
-			else {
-				if ($count_zero >= $count_up) {
-					$finalfiltered = $finalfiltered.substr($filtered_up, $rows_done + $rows_done  * $bytesperline, $bytesperline + 1);
-				}
-				else {
-					$finalfiltered = $finalfiltered.substr($unfiltereddata, $rows_done + $rows_done * $bytesperline, $bytesperline + 1);
-				}
-			}
+		elsif (($count_up <= $count_zero)&&($count_up <= $count_sub)) 
+		{
+			$finalfiltered = $finalfiltered.substr($filtered_up, $rows_done + $rows_done  * $bytesperline, $bytesperline + 1);
+		}
+		elsif ($count_sub <= $count_zero) 
+		{
+			$finalfiltered = $finalfiltered.substr($filtered_sub, $rows_done + $rows_done * $bytesperline, $bytesperline + 1);
+		}
+		else
+		{
+			$finalfiltered = $finalfiltered.substr($unfiltereddata, $rows_done + $rows_done * $bytesperline, $bytesperline + 1);
 		}
 		$countout = 0;
 		$count_up = 0;
 		$count_sub = 0;
 		$count_zero = 0;
 		$count_ave = 0;
+		$count_paeth = 0;
 		$rows_done++;
 	}
 	return $finalfiltered;
