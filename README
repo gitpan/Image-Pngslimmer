@@ -1,4 +1,4 @@
-Image::Pngslimmer version 0.11
+Image::Pngslimmer version 0.12
 =============================
 
 OVERVIEW
@@ -27,7 +27,8 @@ useful for testing the "before and after" effect of discard_noncritical($blob).
 Image::Pngzlimmer::zlibshrink($blob) will attempt to improve compression of the supplied BLOB
 
 Image::Pngslimmer::filter($blob) will attempt to apply adaptive filtering for
-better compression of the supplied BLOB
+better compression of the supplied BLOB - filtering normally results in better
+compression once zlibshrink() is reapplied.
 
 
 INSTALLATION
@@ -42,8 +43,9 @@ To install this module type the following:
 DEPENDENCIES
 
 
-String::CRC32
-Compress:Zlib
+POSIX
+Compress::Zlib
+Compress::Raw::Zlib
   
 
 COPYRIGHT AND LICENCE

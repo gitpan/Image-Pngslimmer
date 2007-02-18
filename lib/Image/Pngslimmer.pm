@@ -4,6 +4,7 @@ use 5.008004;
 use strict;
 use warnings;
 use Compress::Zlib;
+use Compress::Raw::Zlib;
 use POSIX;
 
 require Exporter;
@@ -17,9 +18,7 @@ our @ISA = qw(Exporter);
 # This allows declaration	use Image::Pngslimmer ':all';
 # If you do not need this, moving things directly into @EXPORT or @EXPORT_OK
 # will save memory.
-our %EXPORT_TAGS = ( 'all' => [ qw(
-	
-) ] );
+our %EXPORT_TAGS = ( 'all' => [ qw() ] );
 
 our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 
@@ -27,7 +26,7 @@ our @EXPORT = qw(
 	
 );
 
-our $VERSION = '0.11';
+our $VERSION = '0.12';
 
 sub checkcrc {
 	my $chunk = shift;
@@ -92,45 +91,94 @@ sub ispng {
 }
 
 sub shrinkchunk {
-	my ($blobin, $blobout, $strategy, $status, $y);
+	my ($blobin, $bitblob, $blobout, $strategy, $status, $y, $level);
 	$blobin = shift;
 	$strategy = shift;
-	if ($strategy eq "Z_FILTERED")	{($y, $status) = deflateInit(-Level => Z_BEST_COMPRESSION, -WindowBits=> -MAX_WBITS, -Bufsize=> 0x1000, -Strategy=>Z_FILTERED);}
-	else { ($y, $status) = deflateInit(-Level => Z_BEST_COMPRESSION, -WindowBits=> -MAX_WBITS, -Bufsize=> 0x1000);}
+	$level = shift;
+	$level = Z_BEST_COMPRESSION unless $level;
+	if ($strategy eq "Z_FILTERED")	{($y, $status)=  new Compress::Raw::Zlib::Deflate(-Level => $level, -WindowBits=> -MAX_WBITS, -Bufsize=> 0x100, -Strategy=>Z_FILTERED, -AppendOutput => 1);}
+	else { ($y, $status) = new Compress::Raw::Zlib::Deflate(-Level => $level, -WindowBits=> -MAX_WBITS, -Bufsize=> 0x100, -AppendOutput => 1);}
 	return $blobin unless ($status == Z_OK);
-	($blobout, $status) = $y->deflate($blobin);
+	$status = $y->deflate($blobin, $bitblob);
 	return $blobin unless ($status == Z_OK);
-	($blobout, $status) = $y->flush();
+	$status = $y->flush($bitblob);
+	$blobout = $blobout.$bitblob;
 	return $blobin unless ($status == Z_OK);
 	return $blobout;
 }
 	
 	
+sub getuncompressed_data {
+	my ($output, $puredata, @idats, $x, $status, $outputlump, $calc_crc, $uncompcrc);
+	my $blobin = shift;
+	my $pnglength = length($blobin);
+	my $searchindex = 8 + 25; #start looking at the end of the IHDR
+	while ($searchindex < ($pnglength - 8)) {
+		my $chunklength = unpack("N", substr($blobin, $searchindex, 4));
+		if (substr($blobin, $searchindex + 4, 4) eq "IDAT") {
+			push (@idats, $searchindex);
+		}
+		$searchindex += $chunklength + 12;
+	}
+	my $numberofidats = @idats;
+	if ($numberofidats == 0) {return undef;}
+	my $chunknumber = 0;
+	while($chunknumber < $numberofidats) {
+		my $chunklength = unpack("N", substr($blobin, $idats[$chunknumber], 4));
+		if ($chunknumber == 0) {
+			if ($numberofidats == 1)
+			{
+				$output = substr($blobin, $idats[0] + 10, $chunklength - 2);
+				last;
+			}
+			else
+			{
+				$output = substr($blobin, $idats[0] + 10, $chunklength - 2); 
+			}
+		}
+		else {
+			if (($numberofidats - 1) == $chunknumber)
+			{
+				$puredata = substr($blobin, $idats[$chunknumber] + 8, $chunklength); 
+				$output = $output.$puredata;	
+				last;
+			}
+			else
+			{
+				$puredata = substr($blobin, $idats[$chunknumber] + 8, $chunklength); 
+				$output = $output.$puredata;
+			}
+		}
+		$chunknumber++;
+	}
+	#have the output chunk now uncompress it
+	$x = new Compress::Raw::Zlib::Inflate(-WindowBits => -MAX_WBITS, -ADLER32=>1, -AppendOutput=>1)
+		or return undef;
+	my $outlength = length($output);
+	$uncompcrc = unpack("N", substr($output, $outlength - 4));
+	$status = $x->inflate(substr($output, 0, $outlength - 4), $outputlump);
+	return undef unless $outputlump;
+	$calc_crc = $x->adler32();
+	if ($calc_crc != $uncompcrc) {
+		return undef;}
+	return $outputlump; # done
+}
 
 sub crushdatachunk {
-	#TO DO: Currently only works for single IDAT chunk - FIX ME
 	#look to inner stream, uncompress that, then recompress
-	my ($chunkin, $datalength, $puredata, $chunkout, $crusheddata, $y, $purecrc);
+	my ($chunkin, $datalength, $puredata, $chunkout, $crusheddata, $y, $purecrc, $blobin);
 	$chunkin = shift;
-	$datalength = unpack("N", substr($chunkin, 0, 4));
-	$puredata = substr($chunkin, 10, $datalength - 6);
-	my $rawlength = length($puredata);
-	$purecrc = unpack("N", substr($chunkin, $rawlength + 10, 4));
-	my $x = inflateInit(-WindowBits => -MAX_WBITS)
-		or return $chunkin;
-	my ($output, $status);
-	$output = $x->inflate($puredata);
-	my $complen = $datalength - 6;
+	$blobin = shift;
+	my $output = getuncompressed_data($blobin);
+	my $lenuncomp = length($output);
 	return $chunkin unless $output;
-	#check the CRCs match
-	my $uncompcrc = adler32($output);
-	if ($uncompcrc ne $purecrc){ return $chunkin;}
+	my $rawlength = length($output);
+	$purecrc = adler32($output);
 	# now crush it at the maximum level
 	$crusheddata = shrinkchunk($output, Z_FILTERED);
+	my $lencompo = length($crusheddata);
 	unless (length($crusheddata) < $rawlength) {$crusheddata = shrinkchunk($output, Z_DEFAULT_STRATEGY);}
-	#should we go any further?
 	my $newlength = length($crusheddata) + 6;
-	return $chunkin unless (($newlength) < $rawlength);
 	#now we have compressed the data, write the chunk
 	$chunkout = pack("N", $newlength);
 	my $rfc1950stuff = pack("C2", (0x78,0xDA)); 
@@ -155,49 +203,27 @@ sub zlibshrink {
 	$searchindex =  16 + $ihdr_len + 4 + 4;
 	#copy the start of the incoming blob
 	$blobout = substr($blobin, 0, 16 + $ihdr_len + 4);
+	my $idatfound = 0;
 	while ($searchindex < ($pnglength - 4)) {
 		#Copy the chunk
 		$chunklength = unpack("N", substr($blobin, $searchindex - 4, 4));
 		$chunktocopy = substr($blobin, $searchindex - 4, $chunklength + 12);
 		if (substr($blobin, $searchindex, 4) eq "IDAT") {
-			$processedchunk = crushdatachunk($chunktocopy);
-			my ($x, $y);
-			$x = length($processedchunk);
-			$y = length($chunktocopy);
-			if (length($processedchunk) < length($chunktocopy)) {$chunktocopy = $processedchunk;}
+			if ($idatfound == 0){
+				$processedchunk = crushdatachunk($chunktocopy, $blobin);
+				$chunktocopy = $processedchunk;
+				$idatfound = 1;
+			}
+			else {$chunktocopy = "";}
 		}
+		
+		my $lenIDAT = length($chunktocopy);
 		$blobout = $blobout.$chunktocopy;
 		$searchindex += $chunklength + 12;
 	}
 	return $blobout;
 }
 
-sub getuncompressed_data {
-	my $blobin = shift;
-	my $pnglength = length($blobin);
-	my $searchindex = 8 + 25; #start looking at the end of the IHDR
-	while ($searchindex < ($pnglength - 8)) {
-		my $chunklength = unpack("N", substr($blobin, $searchindex, 4));
-		if (substr($blobin, $searchindex + 4, 4) eq "IDAT") {
-			#get the data
-			my $puredata = substr($blobin, $searchindex + 10, $chunklength - 6); #just the rfc1951 data
-			my $uncompcrc = unpack("N", substr($blobin, $searchindex + 8 + $chunklength - 4)); #adler crc for uncompressed data
-			#now uncompress it
-			my $x = inflateInit(-WindowBits => -MAX_WBITS)
-					or return undef;
-			my ($output, $status);
-			($output, $status) = $x->inflate($puredata);
-			return undef unless $output;
-			my $calc_crc = adler32($output);
-			if ($calc_crc != $uncompcrc) {
-				return undef;}
-			# FIX ME - what if there is more than one IDAT? #
-			return $output; # done 
-		}
-		$searchindex += $chunklength + 12;
-	}
-	return undef;
-}
 
 sub linebyline {
 	#analyze the data line by line
@@ -495,7 +521,6 @@ sub getihdr {
 	
 sub filter {
  	my ($blobin, $filtereddata);
-	#decompress image and examine scanlines
 	$blobin = shift;
 	#basic check so we do not waste our time
 	if (ispng($blobin) < 1) {
@@ -516,16 +541,17 @@ sub filter {
 	my $datachunk = getuncompressed_data($blobin);
 	return $blobin unless $datachunk;;
 	my $canfilter = linebyline($datachunk, \%ihdr);
+	my $preproclen = length($datachunk);
 	if ($canfilter > 0)
 	{
 		$filtereddata = filterdata($datachunk, \%ihdr);
-	
 	}
 	else {return $blobin;}
+	my $postproclen = length($filtereddata);
         #Now stick the uncompressed data into a chunk
 	#and return - leaving the compression to a different process
         my $filteredcrc = adler32($filtereddata);
-	$filtereddata = shrinkchunk($filtereddata, Z_FILTERED);
+	$filtereddata = shrinkchunk($filtereddata, Z_FILTERED, Z_BEST_SPEED);
 	my $filterlen = length($filtereddata);
 	#now push the data into the PNG
         my $pnglength = length($blobin);
@@ -533,26 +559,28 @@ sub filter {
         my $searchindex =  16 + $ihdr_len + 4 + 4;
         #copy the start of the incoming blob
         my $blobout = substr($blobin, 0, 16 + $ihdr_len + 4);
+	my $foundidat = 0;
         while ($searchindex < ($pnglength - 4)) {
 	        #Copy the chunk
                 my $chunklength = unpack("N", substr($blobin, $searchindex - 4, 4));
                 my $chunktocopy = substr($blobin, $searchindex - 4, $chunklength + 12);
                 if (substr($blobin, $searchindex, 4) eq "IDAT") {
-			my $rfc1950stuff = pack("C2", (0x78, 0xDA));
-			my $output = "IDAT".$rfc1950stuff.$filtereddata.pack("N", $filteredcrc);
-			my $newlength = $filterlen + 6;
-			my $outCRC = crc32($output);
-			my $processedchunk = pack("N", $newlength).$output.pack("N", $outCRC);
-			$chunktocopy = $processedchunk;
+			if ($foundidat == 0) { #ignore any additional IDAT chunks
+				my $rfc1950stuff = pack("C2", (0x78, 0x5E));
+				my $output = "IDAT".$rfc1950stuff.$filtereddata.pack("N", $filteredcrc);
+				my $newlength = $filterlen + 6;
+				my $outCRC = crc32($output);
+				my $processedchunk = pack("N", $newlength).$output.pack("N", $outCRC);
+				$chunktocopy = $processedchunk;
+				$foundidat = 1;
+			}
+			else {$chunktocopy = "";}
                 }
                 $blobout = $blobout.$chunktocopy;
                 $searchindex += $chunklength + 12;
 	}
         return $blobout;
 }
-
-	
-
 
 sub discard_noncritical {
 	my ($blob, $cleanblob, $searchindex, $pnglength, $chunktext, $nextindex);
@@ -652,17 +680,20 @@ Image::Pngslimmer - slims (dynamically created) PNGs
 =head1 DESCRIPTION
 
 Image::Pngslimmer aims to cut down the size of PNGs. Users pass a PNG to various functions 
-(though only one presently exists - Image::Pngslimmer::discard_noncritical($blob)) and a
-slimmer version is returned. Image::Pngslimmer is designed for use where PNGs are being
-generated on the fly and where size matters - eg for J2ME use. There are other options - 
-probably better ones - for handling static PNGs.
+and a slimmer version is returned. Image::Pngslimmer is designed for use where PNGs are being
+generated on the fly and where size matters more than speed- eg for J2ME use or any similiar 
+low speed or high latency environment. There are other options - probably better ones - for 
+handling static PNGs.
+
+Filtering and recompressing an image is not fast - for example on a 4300 BogoMIPS box with 1G
+of memory the author processes PNGs at about 30KB per second.
 
 Call discard_noncritical($blob) on a stream of bytes (eg as created by Perl Magick's
 Image::Magick package) to remove sections of the PNG that are not essential for display.
 
 Do not expect this to result in a big saving - the author suggests maybe 200 bytes is typical
 - but in an environment such as the backend of J2ME applications that may still be a 
-worthwhile reduction..
+worthwhile reduction.
 
 discard_noncritical($blob) will call ispng($blob) before attempting to manipulate the
 supplied stream of bytes - hopefully, therefore, avoiding the accidental mangling of 
@@ -677,12 +708,13 @@ discard_noncritical but may be used to show 'before-and-after' to demonstrate th
 delivered by discard_noncritical.
 
 zlibshrink($blob) will attempt to better compress the supplied PNG and will achieve good results
-with smallish (ie with only one IDAT chunk) but poorly compressed PNGs.
+with poorly compressed PNGs.
 
-filter($blob) will attempt to apply some adaptive filtering to the PNG - filtering should deliver
-compression (though the results can be mixed). Currently this code is under development but it does
-work on PNG test images and if filtering is not possible (eg the image has already been filtered),
-then an unchanged image is returned. All PNG compression and filtering is lossless.
+filter($blob) will attempt to apply adaptive filtering to the PNG - filtering should deliver 
+better compression results (though the results can be mixed).  Please note that filter() will 
+compress the image with Z_BEST_SPEED and so the blob returned from the function may even be larger
+than the blob passed in. You must call zlibshrink if you want to recompress the blob at maximum level.
+All PNG compression and filtering is lossless.
 
 =head1 LICENCE AND COPYRIGHT
 
@@ -694,17 +726,15 @@ It is copyright (c) Adrian McMenamin, 2006, 2007
 
 	POSIX
 	Compress::Zlib
+	Compress::Raw::Zlib
 
 =head1 TODO
 
 To make Pngslimmer really useful it needs to construct grayscale PNGs from coloured PNGs
 and paletize true colour PNGs. I am working on it!
 
-zlibshrink - introduced in version 0.05 - needs to be made to work with PNGs with more than one
-IDAT chunk
-
-filtering - with all type implement since version 0.1 needs to work with PNGs with more than
-one IDAT chunk
+Please note that from version 0.12 Image::Pngslimmer will handle PNGs with muliple IDAT
+chunks.
 
 =head1 AUTHOR
 

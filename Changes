@@ -1,5 +1,8 @@
 Revision history for Perl extension Image::Pngslimmer.
 
+0.12  Sun Feb 18 18:32:00
+	- support multiple IDATs
+
 0.11  Mon Feb 12 19:16:00
 	- filtering heuristic improved
 
