@@ -8,8 +8,10 @@ t/02-slimnoncrit.t
 t/03-analyze.t
 t/04-zlibcompress.t
 t/05-filter.t
+t/06-palettize.t
 t/test1.gif
 t/test1.png
 t/test3.png
+t/test6.png
 lib/Image/Pngslimmer.pm
 META.yml                                 Module meta-data (added by MakeMaker)

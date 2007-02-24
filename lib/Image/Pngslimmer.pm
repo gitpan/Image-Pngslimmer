@@ -26,7 +26,7 @@ our @EXPORT = qw(
 	
 );
 
-our $VERSION = '0.12';
+our $VERSION = '0.13';
 
 sub checkcrc {
 	my $chunk = shift;
@@ -95,15 +95,15 @@ sub shrinkchunk {
 	$blobin = shift;
 	$strategy = shift;
 	$level = shift;
-	$level = Z_BEST_COMPRESSION unless $level;
+	unless (defined($level)){$level = Z_BEST_COMPRESSION;}
 	if ($strategy eq "Z_FILTERED")	{($y, $status)=  new Compress::Raw::Zlib::Deflate(-Level => $level, -WindowBits=> -MAX_WBITS, -Bufsize=> 0x100, -Strategy=>Z_FILTERED, -AppendOutput => 1);}
 	else { ($y, $status) = new Compress::Raw::Zlib::Deflate(-Level => $level, -WindowBits=> -MAX_WBITS, -Bufsize=> 0x100, -AppendOutput => 1);}
-	return $blobin unless ($status == Z_OK);
+	unless ($status == Z_OK){ return $blobin;}
 	$status = $y->deflate($blobin, $bitblob);
-	return $blobin unless ($status == Z_OK);
+	unless ($status == Z_OK){ return $blobin;}
 	$status = $y->flush($bitblob);
 	$blobout = $blobout.$bitblob;
-	return $blobin unless ($status == Z_OK);
+	unless ($status == Z_OK){ return $blobin;}
 	return $blobout;
 }
 	
@@ -157,7 +157,7 @@ sub getuncompressed_data {
 	my $outlength = length($output);
 	$uncompcrc = unpack("N", substr($output, $outlength - 4));
 	$status = $x->inflate(substr($output, 0, $outlength - 4), $outputlump);
-	return undef unless $outputlump;
+	unless (defined($outputlump)){ return undef;}
 	$calc_crc = $x->adler32();
 	if ($calc_crc != $uncompcrc) {
 		return undef;}
@@ -171,7 +171,7 @@ sub crushdatachunk {
 	$blobin = shift;
 	my $output = getuncompressed_data($blobin);
 	my $lenuncomp = length($output);
-	return $chunkin unless $output;
+	unless (defined($output)){ return $chunkin;}
 	my $rawlength = length($output);
 	$purecrc = adler32($output);
 	# now crush it at the maximum level
@@ -250,6 +250,8 @@ sub linebyline {
 }
 
 sub comp_width {
+	#how many bytes per pixel
+	#FIX ME: only works for colour depth > 8
 	my ($ihdr, %ihdr);
 	$ihdr = shift;
 	%ihdr = %{$ihdr};
@@ -287,7 +289,7 @@ sub filter_sub {
 	my $count = 0;
 	my $count_width = 0;
 	$newbyte = 0;
-	my $comp_width=comp_width(\%ihdr);
+	my $comp_width = comp_width(\%ihdr);
 	my $totalwidth = $ihdr{"imagewidth"} * $comp_width;
 	$filtereddata = "";
 	my $lines = $ihdr{"imageheight"};
@@ -436,6 +438,7 @@ sub filter_paeth {	#paeth predictor type filtering
 	}
 	return $filtereddata;
 }
+
 sub filterdata {
 	my ($unfiltereddata, $ihdr, $filtereddata, $finalfiltered, $filtered_sub, $filtered_up, $filtered_ave, $filtered_paeth);
 	$unfiltereddata = shift;
@@ -539,7 +542,7 @@ sub filter {
 		return $blobin;
 	}
 	my $datachunk = getuncompressed_data($blobin);
-	return $blobin unless $datachunk;;
+	unless (defined($datachunk)) {return $blobin;}
 	my $canfilter = linebyline($datachunk, \%ihdr);
 	my $preproclen = length($datachunk);
 	if ($canfilter > 0)
@@ -585,7 +588,7 @@ sub filter {
 sub discard_noncritical {
 	my ($blob, $cleanblob, $searchindex, $pnglength, $chunktext, $nextindex);
 	$blob = shift;
-	if (Image::Pngslimmer::ispng($blob) < 1) { return $blob; } #not a PNG so just return the blob unaltered
+	if (ispng($blob) < 1) { return $blob; } #not a PNG so just return the blob unaltered
 	#we know we have a png = so go straight to the IHDR chunk
 	#copy signature and text + length from IHDR
 	$cleanblob = substr($blob, 0, 16);
@@ -612,6 +615,318 @@ sub discard_noncritical {
 	return $cleanblob;
 }
 
+sub ispalettized {
+	my ($blobin, $ihdr, %ihdr);
+	$blobin = shift;
+	$ihdr = getihdr($blobin);
+	%ihdr = %{$ihdr};
+	return 0 unless $ihdr{"colourtype"} == 3;
+	return 1;
+}
+
+sub unfiltersub {
+	my ($chunkin, $lines_done, $linelength, $lineout, $comp_width, $addition);
+	($chunkin, $lines_done, $linelength, $comp_width) = @_;
+	my $pointis = 1;
+	while ($pointis < $linelength)
+	{
+		my $reconbyte = unpack("C", substr($chunkin, $lines_done * $linelength + $pointis, 1));
+		if ($pointis > $comp_width) {
+			$addition = unpack("C", substr($lineout, $pointis - $comp_width - 1, 1));
+		}
+		else {$addition = 0;}
+		$reconbyte = ($reconbyte + $addition)%256;
+		$lineout = $lineout.pack("C", $reconbyte);
+		$pointis++;
+	}
+	$lineout = "\0".$lineout;
+	return $lineout;
+}
+
+sub unfilterup {
+	my ($chunkin, $chunkout, $lines_done, $linelength, $lineout,  $addition);
+	($chunkin, $chunkout, $lines_done, $linelength) = @_;
+	my $pointis = 1;
+	while ($pointis < $linelength)
+	{
+		my $reconbyte = unpack("C", substr($chunkin, $lines_done * $linelength + $pointis, 1));
+		if ($lines_done > 0) {
+			$addition = unpack("C", substr($chunkout, ($lines_done - 1) * $linelength + $pointis, 1));
+		}
+		else {$addition = 0;}
+		$reconbyte = ($reconbyte + $addition)%256;
+		$lineout = $lineout.pack("C", $reconbyte);
+		$pointis++;
+	}
+	$lineout = "\0".$lineout;
+	return $lineout;
+}
+	
+sub unfilterave {
+	my ($chunkin, $chunkout, $lines_done, $linelength, $lineout, $compwidth, $addition, $addition_up, $addition_left);
+	($chunkin, $chunkout, $lines_done, $linelength, $compwidth) = @_;
+	my $pointis = 1;
+	while ($pointis < $linelength)
+	{
+		my $reconbyte = unpack("C", substr($chunkin, $lines_done * $linelength + $pointis, 1));
+		if ($lines_done > 0) {
+			$addition_up = unpack("C", substr($chunkout, ($lines_done - 1) * $linelength + $pointis, 1));
+		}
+		else {$addition_up = 0;}
+		if ($pointis > $compwidth) {
+			$addition_left = unpack("C", substr($lineout, $pointis - $compwidth - 1, 1));
+		}
+		else {$addition_left = 0;}
+		$addition = floor(($addition_up + $addition_left)/2);
+		$reconbyte = ($reconbyte + $addition)%256;
+		$lineout = $lineout.pack("C", $reconbyte);
+		$pointis++;
+	}
+	$lineout = "\0".$lineout;
+	return $lineout;
+}
+
+sub unfilterpaeth {
+	my ($chunkin, $chunkout, $lines_done, $linelength, $lineout, $compwidth, $addition, $addition_up, $addition_left, $addition_uleft);
+	($chunkin, $chunkout, $lines_done, $linelength, $compwidth) = @_;
+	my $pointis = 1;
+	while ($pointis < $linelength)
+	{
+		my $reconbyte = unpack("C", substr($chunkin, $lines_done * $linelength + $pointis, 1));
+		$addition_uleft = 0;
+		if ($lines_done > 0) {
+			$addition_up = unpack("C", substr($chunkout, ($lines_done - 1) * $linelength + $pointis, 1));
+			if ($pointis > $compwidth) {
+				$addition_uleft = unpack("C", substr($chunkout, ($lines_done - 1) * $linelength + $pointis - $compwidth, 1));
+			}
+		}
+		else {$addition_up = 0;}
+		if ($pointis > $compwidth) {
+			$addition_left = unpack("C", substr($lineout, $pointis - $compwidth - 1, 1));
+		}
+		else {$addition_left = 0;}
+		my $paeth_p = $addition_up + $addition_left - $addition_uleft;
+		my $paeth_a = abs($paeth_p - $addition_left);
+		my $paeth_b = abs($paeth_p - $addition_up);
+		my $paeth_c = abs($paeth_p - $addition_uleft);
+		if (($paeth_a <= $paeth_b) && ($paeth_a <= $paeth_c)) { $addition = $addition_left;}
+		elsif ($paeth_b <= $paeth_c) {$addition = $addition_up;}
+		else {$addition = $paeth_c;}
+		$reconbyte = ($reconbyte + $addition)%256;
+		$lineout = $lineout.pack("C", $reconbyte);
+		$pointis++;
+	}
+	$lineout = "\0".$lineout;
+	return $lineout;
+}
+
+
+sub unfilter {
+	my  ($blobin, $chunkin, $chunkout, $ihdr, %ihdr, $imageheight, $imagewidth);
+	$chunkin = shift;
+	$ihdr = shift;
+	%ihdr = %{$ihdr};
+	$imageheight = $ihdr{"imageheight"};
+	$imagewidth = $ihdr{"imagewidth"};
+	#get each line
+	my $lines_done = 0;
+	my $pixels_done = 0;
+	my $comp_width = comp_width(\%ihdr);
+	my $linelength = $comp_width * $imagewidth + 1;
+	while ($lines_done < $imageheight)
+	{
+		my $filtertype = unpack("C", substr($chunkin, $lines_done * $linelength, 1));
+		if ($filtertype == 0) {
+			#line not filtered at all
+			$chunkout = $chunkout.substr($chunkin,  $lines_done * $linelength, $linelength);
+		}
+		elsif ($filtertype == 4) {
+			$chunkout = $chunkout.unfilterpaeth($chunkin, $chunkout, $lines_done, $linelength, $comp_width);
+		}
+		elsif ($filtertype == 1) {
+			$chunkout = $chunkout.unfiltersub($chunkin, $lines_done, $linelength, $comp_width);
+		}
+		elsif ($filtertype == 2) {
+			$chunkout = $chunkout.unfilterup($chunkin, $chunkout, $lines_done, $linelength);
+		}
+		else {
+			$chunkout = $chunkout.unfilterave($chunkin, $chunkout, $lines_done, $linelength, $comp_width);
+		}
+		$lines_done++;
+	}
+	return $chunkout;
+}
+
+sub countcolours {
+	my ($chunk, $limit, %colourlist, %ihdr, $ihdr, $totallines, $width, $cdepth, $x, $colourfound);
+	($chunk, $limit, $ihdr) = @_;
+	%ihdr = %{$ihdr};
+	$totallines = $ihdr{"imageheight"};
+	$width = $ihdr{"imagewidth"};
+	$cdepth = comp_width(\%ihdr);
+	my $linesdone = 0;
+	my $linelength = $width * $cdepth + 1;
+	my $coloursfound = 0;
+	while ($linesdone < $totallines)
+	{
+		my $pixelpoint = 0;
+		while ($pixelpoint < $width)
+		{
+			#FIX ME - needs to work with alpha too
+			$colourfound = substr($chunk, ($pixelpoint * $cdepth) + ($linesdone * $linelength) + 1, $cdepth);
+			my $colour = 0;
+			for ($x = 0; $x < $cdepth; $x++)
+			{
+				$colour = $colour + ord(substr($colourfound, $x, 1))*(256**($cdepth - 1 - $x));
+			}
+			if (defined($colourlist{$colour})) { $colourlist{$colour}++;}
+			else {
+				$colourlist{$colour} = 1;
+				$coloursfound++;
+				if (($coloursfound > $limit) && ($limit > 0)) {
+					return (0, 0);
+				}
+			}
+			$pixelpoint++;
+		}
+		$linesdone++;
+	}
+	
+	return ($coloursfound, \%colourlist);
+}
+		
+sub reportcolours {
+	my ($colour_limit, $blobin, $filtereddata, %ihdr, $ihdr, $blobout, $ihdr_chunk, $pal_chunk, $x, %palindex, $palindex, $colourfound);
+	my ($colourlist, %colourlist, $colours);
+	$blobin = shift;
+	#is it a PNG
+	unless( ispng($blobin) > 0)
+	{
+		print "Supplied image is not a PNG\n";
+		return -1;
+	}
+	#is it already palettized?
+	unless (ispalettized($blobin) < 1)
+	{
+		print "Supplied image is indexed.\n";
+		return -1;
+	}
+	$filtereddata = getuncompressed_data($blobin);
+	%ihdr = %{getihdr($blobin)};
+	my $unfiltereddata = unfilter($filtereddata, \%ihdr);
+	($colours, $colourlist) = countcolours($unfiltereddata, 0, \%ihdr);
+	%colourlist = %{$colourlist};
+	foreach $x (keys(%colourlist))
+	{
+		my $rgbhex = sprintf("%14X", $x);
+		print "Colour $rgbhex found $colourlist{$x} times\n";
+	}
+	print "Image contains $colours colours.\n";
+	return \%colourlist;
+}
+		
+sub indexcolours {
+	# take PNG and count colours
+	my ($colour_limit, $blobin, $filtereddata, %ihdr, $ihdr, $blobout, $ihdr_chunk, $pal_chunk, $x, %palindex, $palindex, $colourfound);
+	my ($colourlist, %colourlist, $colours);
+	$blobin = shift;
+	#is it a PNG
+	return $blobin unless ispng($blobin) > 0;
+	#is it already palettized?
+	return $blobin unless ispalettized($blobin) < 1;
+	$colour_limit = shift; 
+	#0 means no limit
+	$colour_limit = 0 unless $colour_limit;
+	$filtereddata = getuncompressed_data($blobin);
+	%ihdr = %{getihdr($blobin)};
+	my $unfiltereddata = unfilter($filtereddata, \%ihdr);
+	($colours, $colourlist) = countcolours($unfiltereddata, $colour_limit, \%ihdr);
+	if ($colours < 1) {return $blobin;}
+	#to write out an indexed version $colours has to be less than 256
+	if ($colours < 256) {
+		#have to rewrite the whole thing now
+		#start with the PNG header
+		$blobout = pack("C8", (137, 80, 78, 71, 13, 10, 26, 10));
+		#now the IHDR
+		$blobout = $blobout.pack("N", 0x0D);
+		$ihdr_chunk = "IHDR";
+		$ihdr_chunk = $ihdr_chunk.pack("N2", ($ihdr{"imagewidth"}, $ihdr{"imageheight"}));
+		#FIX ME: Support index of less than 8 bits
+		$ihdr_chunk = $ihdr_chunk.pack("C2", (8, 3)); #8 bit indexed colour
+		$ihdr_chunk = $ihdr_chunk.pack("C3", ($ihdr{"compression"}, $ihdr{"filter"}, $ihdr{"interlace"}));
+		my $ihdrcrc = crc32($ihdr_chunk);
+		$blobout = $blobout.$ihdr_chunk.pack("N", $ihdrcrc);
+		#now any chunk before the IDAT
+        	my $searchindex =  16 + 13 + 4 + 4;
+		my $pnglength = length($blobin);
+		my $foundidat = 0;
+        	while ($searchindex < ($pnglength - 4)) {
+	        #Copy the chunk
+	                my $chunklength = unpack("N", substr($blobin, $searchindex - 4, 4));
+        	        my $chunktocopy = substr($blobin, $searchindex - 4, $chunklength + 12);
+                	if (substr($blobin, $searchindex, 4) eq "IDAT") {
+				if ($foundidat == 0) { #ignore any additional IDAT chunks
+					#now the palette chunk
+					$pal_chunk = "";
+					my %colourlist = %{$colourlist};
+					my $palcount = 0;
+					foreach $x (keys %colourlist)
+					{	
+						$pal_chunk = $pal_chunk.pack("C3", (($x & 0xFF0000)>>16, ($x & 0xFF00)>>8, $x & 0xFF));
+						#use a second hash to record where the colour is in the palette
+						$palindex{$x} = $palcount;
+						$palcount++;
+					}
+					my $pal_crc = crc32("PLTE".$pal_chunk);
+					my $len_pal = length($pal_chunk);
+					$blobout = $blobout.pack("N", $len_pal)."PLTE".$pal_chunk.pack("N", $pal_crc);
+					#now process the IDAT
+					my $dataout;
+					my $linesdone = 0;
+					my $totallines = $ihdr{"imageheight"};
+					my $width = $ihdr{"imagewidth"};
+					my $cdepth = comp_width(\%ihdr);
+					my $linelength = $width * $cdepth + 1;
+					while ($linesdone < $totallines)
+					{
+						$dataout = $dataout."\0";
+						my $pixelpoint = 0;
+						while ($pixelpoint < $width)
+						{
+							#FIX ME - needs to work with alpha too
+							$colourfound = substr($unfiltereddata, ($pixelpoint * $cdepth) + ($linesdone * $linelength) + 1, $cdepth);
+							my $colour = 0;
+							for ($x = 0; $x < $cdepth; $x++)
+							{
+								$colour = $colour + ord(substr($colourfound, $x, 1))*(256**($cdepth - 1 - $x));
+							}
+							$dataout = $dataout.pack("C", $palindex{$colour});
+							$pixelpoint++;
+						}
+						$linesdone++;
+					}
+					#now to deflate $dataout to get proper stream
+					
+					my $rfc1950stuff = pack("C2", (0x78, 0x5E));
+					my $rfc1951stuff = shrinkchunk($dataout, Z_DEFAULT_STRATEGY, Z_BEST_COMPRESSION);
+					my $output = "IDAT".$rfc1950stuff.$rfc1951stuff.pack("N", adler32($dataout));
+					my $newlength = length($output) - 4;
+					my $outCRC = crc32($output);
+					my $processedchunk = pack("N", $newlength).$output.pack("N", $outCRC);
+					$chunktocopy = $processedchunk;
+					$foundidat = 1;
+				}
+				else {$chunktocopy = "";}
+	                }
+        	        $blobout = $blobout.$chunktocopy;
+                	$searchindex += $chunklength + 12;
+		}
+	}
+	else {return $blobin;}
+	return $blobout;
+	
+}
+	
 sub analyze {
 	my ($blob, $chunk_desc, $chunk_text, $chunk_length, $chunk_CRC, $crit_status, $pub_status, @chunk_array, $searchindex, $pnglength, $nextindex);
 	my ($chunk_CRC_checked);
@@ -675,18 +990,22 @@ Image::Pngslimmer - slims (dynamically created) PNGs
 	my @chunklist = analyze($blob) 		#get the chunklist as an array
 	$newblob = zlibshrink($blob)		#attempt to better compress the PNG
 	$newblob = filter($blob)		#apply adaptive filtering and then compress
+	$newblob = indexcolours($blob)		#attempt to replace RGB IDAT with palette
+	\%colourhash = reportcolours($blob)	#print details of the colours in the PNG
 	
 
 =head1 DESCRIPTION
 
 Image::Pngslimmer aims to cut down the size of PNGs. Users pass a PNG to various functions 
-and a slimmer version is returned. Image::Pngslimmer is designed for use where PNGs are being
+and a slimmer version is returned. Image::Pngslimmer was designed for use where PNGs are being
 generated on the fly and where size matters more than speed- eg for J2ME use or any similiar 
 low speed or high latency environment. There are other options - probably better ones - for 
-handling static PNGs.
+handling static PNGs, though you may still fid the fuctions useful.
 
 Filtering and recompressing an image is not fast - for example on a 4300 BogoMIPS box with 1G
 of memory the author processes PNGs at about 30KB per second.
+
+=head2 Functions
 
 Call discard_noncritical($blob) on a stream of bytes (eg as created by Perl Magick's
 Image::Magick package) to remove sections of the PNG that are not essential for display.
@@ -716,6 +1035,12 @@ compress the image with Z_BEST_SPEED and so the blob returned from the function 
 than the blob passed in. You must call zlibshrink if you want to recompress the blob at maximum level.
 All PNG compression and filtering is lossless.
 
+indexcolours($blob) will attempt to replace a RGB image with a colourmapped image. NB This is not the
+same as quantization - this process is lossless, but also only works if there are less than 256
+colours in the image.
+
+reportcolours($blob) will print details of the colours in the supplied $blob.
+
 =head1 LICENCE AND COPYRIGHT
 
 This is free software and is licenced under the same terms as Perl itself ie Artistic and GPL
@@ -731,7 +1056,8 @@ It is copyright (c) Adrian McMenamin, 2006, 2007
 =head1 TODO
 
 To make Pngslimmer really useful it needs to construct grayscale PNGs from coloured PNGs
-and paletize true colour PNGs. I am working on it!
+and paletize true colour PNGs. I am working on it! (From 0.13 some colour indexation functions are
+available).
 
 Please note that from version 0.12 Image::Pngslimmer will handle PNGs with muliple IDAT
 chunks.

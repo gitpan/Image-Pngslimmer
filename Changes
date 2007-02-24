@@ -1,5 +1,8 @@
 Revision history for Perl extension Image::Pngslimmer.
 
+0.13  Sat Feb 24 12:40:00
+	- will now colour index some images
+
 0.12  Sun Feb 18 18:32:00
 	- support multiple IDATs
 
