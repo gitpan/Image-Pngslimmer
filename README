@@ -1,13 +1,14 @@
-Image::Pngslimmer version 0.13
+Image::Pngslimmer version 0.14
 =============================
 
 OVERVIEW
 
-Image::Pngslimmer reduces the size of PNGs by removing non-critcal chunks.
+Image::Pngslimmer reduces the size of PNGs by removing non-critcal chunks and
+recompressing, filtering or palettizing images.
 
 Other tools, such as pngcrush (http://pmt.sourceforge.net/pngcrush/) 
-will deliver (much) better results for static PNGs and Image::Pnglimmer 
-is specifically designed for dynamically created PNGs.
+will deliver better results for static PNGs and Image::Pnglimmer 
+was orginally designed for dynamically created PNGs.
 
 use Image::Pngslimmer
 
@@ -33,6 +34,10 @@ compression once zlibshrink() is reapplied if the original image is truecolour.
 Image::Pngslimmer::indexcolours($blob) will attempt to losslessly convert the supplied PNG to
 a colour indexed image - of the image contains more than 256 colours this will not work and the
 original PNG is returned instead.
+
+Image::Pngslimmer::palettize($blob) will colour index (with a PLTE chunk) a 24 bit RGB image. If
+the original image has 256 colours or less it will do this losslessly but calling indexcolours(),
+otherwise it will generate a 256 colur palette by using the median cut algorithm.
 
 Image::Pngslimmer::reportcolours($blob) will print details of the colour frequencies in the
 passed in PNG.

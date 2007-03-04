@@ -5,6 +5,7 @@ use strict;
 use warnings;
 use Compress::Zlib;
 use Compress::Raw::Zlib;
+use Math::NumberCruncher;
 use POSIX;
 
 require Exporter;
@@ -26,7 +27,8 @@ our @EXPORT = qw(
 	
 );
 
-our $VERSION = '0.13';
+our $VERSION = '0.14';
+
 
 sub checkcrc {
 	my $chunk = shift;
@@ -96,8 +98,8 @@ sub shrinkchunk {
 	$strategy = shift;
 	$level = shift;
 	unless (defined($level)){$level = Z_BEST_COMPRESSION;}
-	if ($strategy eq "Z_FILTERED")	{($y, $status)=  new Compress::Raw::Zlib::Deflate(-Level => $level, -WindowBits=> -MAX_WBITS, -Bufsize=> 0x100, -Strategy=>Z_FILTERED, -AppendOutput => 1);}
-	else { ($y, $status) = new Compress::Raw::Zlib::Deflate(-Level => $level, -WindowBits=> -MAX_WBITS, -Bufsize=> 0x100, -AppendOutput => 1);}
+	if ($strategy eq "Z_FILTERED")	{($y, $status)=  new Compress::Raw::Zlib::Deflate(-Level => $level, -WindowBits=> -&MAX_WBITS(), -Bufsize=> 0x1000, -Strategy=>Z_FILTERED, -AppendOutput => 1);}
+	else { ($y, $status) = new Compress::Raw::Zlib::Deflate(-Level => $level, -WindowBits=> -&MAX_WBITS(), -Bufsize=> 0x1000, -AppendOutput => 1);}
 	unless ($status == Z_OK){ return $blobin;}
 	$status = $y->deflate($blobin, $bitblob);
 	unless ($status == Z_OK){ return $blobin;}
@@ -152,7 +154,7 @@ sub getuncompressed_data {
 		$chunknumber++;
 	}
 	#have the output chunk now uncompress it
-	$x = new Compress::Raw::Zlib::Inflate(-WindowBits => -MAX_WBITS, -ADLER32=>1, -AppendOutput=>1)
+	$x = new Compress::Raw::Zlib::Inflate(-WindowBits => -&MAX_WBITS(), -ADLER32=>1, -AppendOutput=>1)
 		or return undef;
 	my $outlength = length($output);
 	$uncompcrc = unpack("N", substr($output, $outlength - 4));
@@ -175,9 +177,9 @@ sub crushdatachunk {
 	my $rawlength = length($output);
 	$purecrc = adler32($output);
 	# now crush it at the maximum level
-	$crusheddata = shrinkchunk($output, Z_FILTERED);
+	$crusheddata = shrinkchunk($output, Z_FILTERED, Z_BEST_COMPRESSION);
 	my $lencompo = length($crusheddata);
-	unless (length($crusheddata) < $rawlength) {$crusheddata = shrinkchunk($output, Z_DEFAULT_STRATEGY);}
+	unless (length($crusheddata) < $rawlength) {$crusheddata = shrinkchunk($output, Z_DEFAULT_STRATEGY, Z_BEST_COMPRESSION);}
 	my $newlength = length($crusheddata) + 6;
 	#now we have compressed the data, write the chunk
 	$chunkout = pack("N", $newlength);
@@ -693,14 +695,19 @@ sub unfilterpaeth {
 	while ($pointis < $linelength)
 	{
 		my $reconbyte = unpack("C", substr($chunkin, $lines_done * $linelength + $pointis, 1));
-		$addition_uleft = 0;
 		if ($lines_done > 0) {
 			$addition_up = unpack("C", substr($chunkout, ($lines_done - 1) * $linelength + $pointis, 1));
 			if ($pointis > $compwidth) {
 				$addition_uleft = unpack("C", substr($chunkout, ($lines_done - 1) * $linelength + $pointis - $compwidth, 1));
 			}
+			else {
+				$addition_uleft = 0;
+			}
 		}
-		else {$addition_up = 0;}
+		else {
+			$addition_up = 0;
+			$addition_uleft = 0;
+		}
 		if ($pointis > $compwidth) {
 			$addition_left = unpack("C", substr($lineout, $pointis - $compwidth - 1, 1));
 		}
@@ -711,9 +718,9 @@ sub unfilterpaeth {
 		my $paeth_c = abs($paeth_p - $addition_uleft);
 		if (($paeth_a <= $paeth_b) && ($paeth_a <= $paeth_c)) { $addition = $addition_left;}
 		elsif ($paeth_b <= $paeth_c) {$addition = $addition_up;}
-		else {$addition = $paeth_c;}
-		$reconbyte = ($reconbyte + $addition)%256;
-		$lineout = $lineout.pack("C", $reconbyte);
+		else {$addition = $addition_uleft;}
+		my $recbyte = ($reconbyte + $addition)%256;
+		$lineout = $lineout.pack("C", $recbyte);
 		$pointis++;
 	}
 	$lineout = "\0".$lineout;
@@ -815,13 +822,9 @@ sub reportcolours {
 	%ihdr = %{getihdr($blobin)};
 	my $unfiltereddata = unfilter($filtereddata, \%ihdr);
 	($colours, $colourlist) = countcolours($unfiltereddata, 0, \%ihdr);
-	%colourlist = %{$colourlist};
-	foreach $x (keys(%colourlist))
-	{
-		my $rgbhex = sprintf("%14X", $x);
-		print "Colour $rgbhex found $colourlist{$x} times\n";
-	}
 	print "Image contains $colours colours.\n";
+	%colourlist = %{$colourlist};
+	my @inputlist = keys(%colourlist);
 	return \%colourlist;
 }
 		
@@ -908,7 +911,7 @@ sub indexcolours {
 					#now to deflate $dataout to get proper stream
 					
 					my $rfc1950stuff = pack("C2", (0x78, 0x5E));
-					my $rfc1951stuff = shrinkchunk($dataout, Z_DEFAULT_STRATEGY, Z_BEST_COMPRESSION);
+					my $rfc1951stuff = shrinkchunk($dataout, Z_DEFAULT_STRATEGY, Z_BEST_SPEED);
 					my $output = "IDAT".$rfc1950stuff.$rfc1951stuff.pack("N", adler32($dataout));
 					my $newlength = length($output) - 4;
 					my $outCRC = crc32($output);
@@ -926,6 +929,277 @@ sub indexcolours {
 	return $blobout;
 	
 }
+
+	
+sub convert_toxyz {
+	#convert 24 bit number to cartesian point
+	my $inpoint = shift;
+	return (($inpoint & 0xFF0000)>>16, ($inpoint & 0xFF00)>>8, $inpoint & 0xFF);
+}
+
+sub convert_tocolour {
+	#convert cartesian to RGB colour
+	my ($x, $y, $z) = @_;
+	return (($x << 16)|($y << 8)|($z));
+}
+
+sub getcolour_ave {
+	my ($red, $green, $blue, @coloursin, $coloursin, $numb, $x, @cartesians, $cartesians);
+	@coloursin = @_;
+	$numb = scalar(@coloursin);
+	if ($numb == 0) { return (0,0,0); };
+	for ($x = 0; $x < $numb; $x++)
+	{
+		my @cartesians = convert_toxyz($coloursin[$x]);
+		$red += $cartesians[0];
+		$green += $cartesians[1];
+		$blue += $cartesians[2];
+	}
+	$red = ($red/$numb)%256;
+	$green = ($green/$numb)%256;
+	$blue = ($blue/$numb)%256;
+	return ($red, $green, $blue);
+}
+
+
+sub getaxis_details {
+	#return a reference to the longestaxis and its length
+	my ($boundingbox, @boundingbox, $longestaxis, $length, $i, @details);
+	$boundingbox = shift;
+	@boundingbox = @$boundingbox;
+	if (scalar(@boundingbox) == 3) {
+		#trap 1 colour case
+		@details = (0, 0);
+		return @details;
+	}
+	$longestaxis = 0;
+	my @lengths;
+	$lengths[0] = $boundingbox[3] - $boundingbox[0];
+	$lengths[1] = $boundingbox[4] - $boundingbox[1];
+	$lengths[2] = $boundingbox[5] - $boundingbox[2];
+	for ($i = 1; $i < 3; $i++)
+	{
+		if ($lengths[$i] > $lengths[$longestaxis]) { $longestaxis = $i;}
+	}
+	my $longestaxis_cor = 2 - $longestaxis;
+	@details = ($longestaxis_cor, $lengths[$longestaxis]);
+	return @details;
+}
+
+
+sub getbiggestbox {
+	#return the index to the biggest box
+	my ($boxesin, @boxesin, $numberofboxes, $i, @sizes, $n);
+	$boxesin = shift;
+	@boxesin = @$boxesin;
+	$numberofboxes = scalar(@boxesin)/4;
+	$n = $numberofboxes; #each box has 4 items stored about it
+	my $z = 0;
+	my $biggest = 0;
+	for ($i = 0; $i < $n; $i++)
+	{
+		my $colours = $boxesin[$i * 4 + 1];
+		my @colours = @$colours;
+		#length is 4th item per box
+		if ($boxesin[$i * 4 + 3] > $z)
+		{
+			$z = $boxesin[$i * 4 + 3];
+			$biggest = $i;
+		}
+			
+	}
+	return $biggest;
+}
+
+sub sortonaxes {
+	my ($boundingref, $coloursref, $longestaxis, $lengthofaxis) = @_;
+	my (@colours, $x, %distances, $distance, @outputlist, @newcolours);
+	@newcolours = @$coloursref;
+	foreach $x (@newcolours)
+	{
+		#FIX ME: Only works for 24 bit images
+		$distance = ($x>>(8 * $longestaxis))&0xFF;
+		$distances{$x} = $distance;
+	}
+	foreach $x (sort {$distances{$a} <=> $distances{$b}} keys %distances)
+	{
+		push @outputlist, $x;
+	}
+	return \@outputlist;
+}
+
+sub generate_box {
+	#convert colours to cartesian points
+	#and then return the bounding box
+	my (@colourpoints, $x, @boundary);
+	my @colourset = @_;
+	foreach $x (@colourset)
+	{
+		push @colourpoints, convert_toxyz($x);
+	}
+	if (scalar(@colourpoints) == 3) { return \@colourpoints;}
+	@boundary = Math::NumberCruncher::BoundingBox_Points(3, @colourpoints);
+	return \@boundary;
+}	
+
+sub getpalette {
+	my ($x, @onebox,  @colours, @palette, %lookup, $lookup, $boxes, $z, $colours);
+	my @boxes = @_;
+	#eachbox has four references
+	my $colnumbers = scalar(@boxes)/4;
+	for ($x = 0; $x < $colnumbers; $x++)
+	{
+		
+		$colours = $boxes[$x * 4 + 1];
+		@colours = @$colours;
+		push @palette, getcolour_ave(@colours);
+		foreach $z (@colours)
+		{
+			$lookup{$z} = $x;
+		}
+	}
+	return (\@palette, \%lookup);
+}
+		
+	
+sub index_mediancut {
+	my ($colour_numbers, $colourlist, %colourlist, @colourkeys, @boundingbox, @colourpoints, $colourspaces, $colcount, @boxes);
+	my ($boxtocut, @biggestbox, @sortedcolours, $median, @lowercolours, @newbox, $biggestbox);
+	my (@palette, %lookup, $lookup, $palref, $lookupref, @axisstuff, $sortedcolours, $boxout);
+	($colour_numbers, $colourlist, $colourspaces) = @_;
+	#if ($colourspaces == undef) {$colourspaces = 256;}
+	$colcount = 0;
+	%colourlist = %{$colourlist};
+	@colourkeys = keys(%colourlist);
+	#can now define the colour space
+	# boxes data is 
+	# reftoboundingboxarray, reftocoloursarray, longest_axis, length_of_longest_axis
+	push @boxes, generate_box(@colourkeys);
+	push @boxes, \@colourkeys;
+	push @boxes, getaxis_details(generate_box(@colourkeys));
+	do {
+		#find the biggest box
+		@biggestbox = ();
+		$boxtocut = getbiggestbox(\@boxes);
+		@biggestbox = @boxes[$boxtocut * 4 .. $boxtocut * 4 + 3];
+		splice(@boxes, $boxtocut * 4, 4);
+		#now sort on the axis
+		$sortedcolours = sortonaxes(@biggestbox);
+		my @sortedcolours = @$sortedcolours;
+		$median = floor(scalar(@sortedcolours)/2);
+		#cut the colours in half
+		my @lowercolours = splice(@sortedcolours, 0, $median);
+		#generate two boxes
+		push @boxes, generate_box(@lowercolours);
+		push @boxes, \@lowercolours;
+		push @boxes, getaxis_details(generate_box(@lowercolours));
+		push @boxes, generate_box(@sortedcolours);
+		push @boxes, \@sortedcolours;
+		push @boxes, getaxis_details(generate_box(@sortedcolours));
+		$colcount = scalar(@boxes) /4;
+	} while ($colcount < $colourspaces);
+	return getpalette(@boxes);
+}
+		
+	
+
+sub palettize {
+	# take PNG and count colours
+	my ($colour_limit, $blobin, $filtereddata, %ihdr, $ihdr, $blobout, $ihdr_chunk, $pal_chunk, $x, %palindex, $palindex, $colourfound);
+	my ($colourlist, %colourlist, $colours, $paloutref, $pallookref);
+	$blobin = shift;
+	#is it a PNG
+	return $blobin unless ispng($blobin) > 0;
+	#is it already palettized?
+	return $blobin unless ispalettized($blobin) < 1;
+	$colour_limit = shift; 
+	#0 means no limit
+	$colour_limit = 0 unless $colour_limit;
+	$filtereddata = getuncompressed_data($blobin);
+	%ihdr = %{getihdr($blobin)};
+	my $unfiltereddata = unfilter($filtereddata, \%ihdr);
+	($colours, $colourlist) = countcolours($unfiltereddata, $colour_limit, \%ihdr);
+	if ($colours < 1) {return $blobin;}
+	if ($colours < 256) {return indexcolours($blobin);}
+	($paloutref, $pallookref) =  index_mediancut($colours, $colourlist, 256);
+	#have to rewrite the whole thing now
+	#start with the PNG header
+	$blobout = pack("C8", (137, 80, 78, 71, 13, 10, 26, 10));
+	#now the IHDR
+	$blobout = $blobout.pack("N", 0x0D);
+	$ihdr_chunk = "IHDR";
+	$ihdr_chunk = $ihdr_chunk.pack("N2", ($ihdr{"imagewidth"}, $ihdr{"imageheight"}));
+	#FIX ME: Support index of less than 8 bits
+	$ihdr_chunk = $ihdr_chunk.pack("C2", (8, 3)); #8 bit indexed colour
+	$ihdr_chunk = $ihdr_chunk.pack("C3", ($ihdr{"compression"}, $ihdr{"filter"}, $ihdr{"interlace"}));
+	my $ihdrcrc = crc32($ihdr_chunk);
+	$blobout = $blobout.$ihdr_chunk.pack("N", $ihdrcrc);
+	#now any chunk before the IDAT
+       	my $searchindex =  16 + 13 + 4 + 4;
+	my $pnglength = length($blobin);
+	my $foundidat = 0;
+       	while ($searchindex < ($pnglength - 4)) {
+       		#Copy the chunk
+	        my $chunklength = unpack("N", substr($blobin, $searchindex - 4, 4));
+                my $chunktocopy = substr($blobin, $searchindex - 4, $chunklength + 12);
+               	if (substr($blobin, $searchindex, 4) eq "IDAT") {
+			if ($foundidat == 0) { #ignore any additional IDAT chunks
+				#now the palette chunk
+				$pal_chunk = "";
+				my @colourlist = @$paloutref;
+				my $palcount = 0;
+				foreach $x (@colourlist)
+				{	
+					$pal_chunk = $pal_chunk.pack("C", ($x & 0xFF));
+				}
+				my $pal_crc = crc32("PLTE".$pal_chunk);
+				my $len_pal = length($pal_chunk);
+				$blobout = $blobout.pack("N", $len_pal)."PLTE".$pal_chunk.pack("N", $pal_crc);
+				#now process the IDAT
+				my $dataout;
+				my $linesdone = 0;
+				my $totallines = $ihdr{"imageheight"};
+				my $width = $ihdr{"imagewidth"};
+				my $cdepth = comp_width(\%ihdr);
+				my $linelength = $width * $cdepth + 1;
+				my %colourlookup = %{$pallookref};
+				while ($linesdone < $totallines)
+				{
+					$dataout = $dataout."\0";
+					my $pixelpoint = 0;
+					while ($pixelpoint < $width)
+					{
+						#FIX ME - needs to work with alpha too
+						$colourfound = substr($unfiltereddata, ($pixelpoint * $cdepth) + ($linesdone * $linelength) + 1, $cdepth);
+						my $colour = 0;
+						for ($x = 0; $x < $cdepth; $x++)
+						{
+							$colour = $colour + ord(substr($colourfound, $x, 1))*(256**($cdepth - 1 - $x));
+						}
+						$dataout = $dataout.pack("C", $colourlookup{$colour});
+						$pixelpoint++;
+					}
+					$linesdone++;
+				}
+				#now to deflate $dataout to get proper stream
+					
+				my $rfc1950stuff = pack("C2", (0x78, 0x5E));
+				my $rfc1951stuff = shrinkchunk($dataout, Z_DEFAULT_STRATEGY, Z_BEST_SPEED);
+				my $output = "IDAT".$rfc1950stuff.$rfc1951stuff.pack("N", adler32($dataout));
+				my $newlength = length($output) - 4;
+				my $outCRC = crc32($output);
+				my $processedchunk = pack("N", $newlength).$output.pack("N", $outCRC);
+				$chunktocopy = $processedchunk;
+				$foundidat = 1;
+			}
+			else {$chunktocopy = "";}
+		}
+        	$blobout = $blobout.$chunktocopy;
+               	$searchindex += $chunklength + 12;
+	}
+	return $blobout;
+}
+	
 	
 sub analyze {
 	my ($blob, $chunk_desc, $chunk_text, $chunk_length, $chunk_CRC, $crit_status, $pub_status, @chunk_array, $searchindex, $pnglength, $nextindex);
@@ -990,7 +1264,8 @@ Image::Pngslimmer - slims (dynamically created) PNGs
 	my @chunklist = analyze($blob) 		#get the chunklist as an array
 	$newblob = zlibshrink($blob)		#attempt to better compress the PNG
 	$newblob = filter($blob)		#apply adaptive filtering and then compress
-	$newblob = indexcolours($blob)		#attempt to replace RGB IDAT with palette
+	$newblob = indexcolours($blob)		#attempt to replace RGB IDAT with palette (losslessly)
+	$newblob = palettize($blob)		#replace RGB IDAT with colour index palette (usually lossy)
 	\%colourhash = reportcolours($blob)	#print details of the colours in the PNG
 	
 
@@ -1035,9 +1310,16 @@ compress the image with Z_BEST_SPEED and so the blob returned from the function 
 than the blob passed in. You must call zlibshrink if you want to recompress the blob at maximum level.
 All PNG compression and filtering is lossless.
 
-indexcolours($blob) will attempt to replace a RGB image with a colourmapped image. NB This is not the
+indexcolours($blob) will attempt to replace an RGB image with a colourmapped image. NB This is not the
 same as quantization - this process is lossless, but also only works if there are less than 256
 colours in the image.
+
+palettize($blob) will replace a 24 bit RGB image with a colourmapped (256 colours) image. If the original
+image has less than 256 colours it will do this by calling indexcolours and so losslessly process
+the image. More generally it will process the image using the lossy median cut algorithm. Currently no
+dithering is applied and this only works for 24 bit images. Again this process is slow - the author can
+process images at about 7.5KB per second - meaning it can be used for J2ME in "real time" but is
+likely to be too slow for many other dynamic uses.
 
 reportcolours($blob) will print details of the colours in the supplied $blob.
 
@@ -1052,12 +1334,12 @@ It is copyright (c) Adrian McMenamin, 2006, 2007
 	POSIX
 	Compress::Zlib
 	Compress::Raw::Zlib
+	Math::NumberCruncher
 
 =head1 TODO
 
-To make Pngslimmer really useful it needs to construct grayscale PNGs from coloured PNGs
-and paletize true colour PNGs. I am working on it! (From 0.13 some colour indexation functions are
-available).
+To make Pngslimmer really useful it needs to handle a broader range of bit map depths etc. The
+work goes on.
 
 Please note that from version 0.12 Image::Pngslimmer will handle PNGs with muliple IDAT
 chunks.

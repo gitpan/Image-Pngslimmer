@@ -1,5 +1,8 @@
 Revision history for Perl extension Image::Pngslimmer.
 
+0.14  Sun Mar 04 17:11:00
+	- will colour index many images
+
 0.13  Sat Feb 24 12:40:00
 	- will now colour index some images
 
