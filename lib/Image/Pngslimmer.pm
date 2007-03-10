@@ -27,7 +27,7 @@ our @EXPORT = qw(
 	
 );
 
-our $VERSION = '0.14';
+our $VERSION = '0.15';
 
 
 sub checkcrc {
@@ -822,7 +822,6 @@ sub reportcolours {
 	%ihdr = %{getihdr($blobin)};
 	my $unfiltereddata = unfilter($filtereddata, \%ihdr);
 	($colours, $colourlist) = countcolours($unfiltereddata, 0, \%ihdr);
-	print "Image contains $colours colours.\n";
 	%colourlist = %{$colourlist};
 	my @inputlist = keys(%colourlist);
 	return \%colourlist;
@@ -901,7 +900,7 @@ sub indexcolours {
 							my $colour = 0;
 							for ($x = 0; $x < $cdepth; $x++)
 							{
-								$colour = $colour + ord(substr($colourfound, $x, 1))*(256**($cdepth - 1 - $x));
+								$colour = $colour<<8|ord(substr($colourfound, $x, 1));
 							}
 							$dataout = $dataout.pack("C", $palindex{$colour});
 							$pixelpoint++;
@@ -1060,14 +1059,39 @@ sub getpalette {
 	}
 	return (\@palette, \%lookup);
 }
+
+sub closestmatch_inRGB {
+	my ($distance, $index, $colourin, $ciR, $ciG, $ciB, $pR, $pG, $pB, $palref, $maxindex, $cdepth, $x);
+	($palref, $colourin, $cdepth) = @_;
+	my @pallist = @$palref;
+	$index = 0;
+	$distance = 0xFFFFFF * 0xFFFFFF; #max distance it could be
+	$maxindex = scalar(@pallist)/3; # assuming three colours
+	($ciR, $ciG, $ciB) = convert_toxyz($colourin);
+	for ($x = 0; $x < $maxindex; $x++)
+	{
+		$pR = $pallist[$x * 3] - $ciR;
+		$pG = $pallist[$x * 3 + 1] - $ciG;
+		$pB = $pallist[$x + 3 + 2] - $ciB;
+		my $newdistance =  $pR * $pR + $pG * $pG + $pB * $pB;
+		if ($newdistance < $distance) {
+			$distance = $newdistance;
+			$index = $x;
+		}
+	}
+	return $index; #should be the closest palette entry
+}
+		
+		
+	
 		
 	
 sub index_mediancut {
 	my ($colour_numbers, $colourlist, %colourlist, @colourkeys, @boundingbox, @colourpoints, $colourspaces, $colcount, @boxes);
 	my ($boxtocut, @biggestbox, @sortedcolours, $median, @lowercolours, @newbox, $biggestbox);
 	my (@palette, %lookup, $lookup, $palref, $lookupref, @axisstuff, $sortedcolours, $boxout);
-	($colour_numbers, $colourlist, $colourspaces) = @_;
-	#if ($colourspaces == undef) {$colourspaces = 256;}
+	($colourlist, $colourspaces) = @_;
+	if (!defined($colourspaces)||($colourspaces == 0)) {$colourspaces = 256;}
 	$colcount = 0;
 	%colourlist = %{$colourlist};
 	@colourkeys = keys(%colourlist);
@@ -1081,8 +1105,7 @@ sub index_mediancut {
 		#find the biggest box
 		@biggestbox = ();
 		$boxtocut = getbiggestbox(\@boxes);
-		@biggestbox = @boxes[$boxtocut * 4 .. $boxtocut * 4 + 3];
-		splice(@boxes, $boxtocut * 4, 4);
+		@biggestbox = splice(@boxes, $boxtocut * 4, 4);
 		#now sort on the axis
 		$sortedcolours = sortonaxes(@biggestbox);
 		my @sortedcolours = @$sortedcolours;
@@ -1101,7 +1124,64 @@ sub index_mediancut {
 	return getpalette(@boxes);
 }
 		
-	
+
+sub dither {
+	#implement Floyd - Steinberg error diffusion dither
+	my ($colour, $unfiltereddata, $cdepth, $linesdone, $pixelpoint, $totallines, $pallookref, $paloutref, $pal_chunk, $width) = @_;
+	my $linelength = $width * $cdepth + 1;
+	#FIX ME not just 24 bit depth
+	my %colourlookup = %$pallookref;
+	my ($rcomp, $gcomp, $bcomp) = convert_toxyz($colour);
+ 	my $palnumber = $colourlookup{$colour};
+	if (!$palnumber) {
+		$palnumber = closestmatch_inRGB($paloutref, $colour, $cdepth);
+	}
+	my ($rp, $rg, $rb) = unpack("C3", substr($pal_chunk, $palnumber * 3, 3));
+	#calculate the errors
+	my @colerror = ();
+	$colerror[0] = $rcomp - $rp;
+	$colerror[1] = $gcomp - $rg;
+	$colerror[2] = $bcomp - $rb;
+	#now diffuse the errors
+	my ($unpacked);
+	for (my $ll = 0; $ll < 3; $ll++)
+	{
+		if (($pixelpoint + 1) < $width) { 
+			$unpacked = unpack("C", substr($unfiltereddata, ($pixelpoint * $cdepth) + ($linesdone * $linelength) + 1 + 3 + $ll, 1));
+			$unpacked += ($colerror[$ll] * 7)/16;
+			if ($unpacked > 255) { $unpacked = 255; }
+			elsif ($unpacked < 0) { $unpacked = 0; }
+			substr($unfiltereddata, ($pixelpoint * $cdepth) + ($linesdone * $linelength) + 1 + 3 + $ll, 1) = pack("C", $unpacked);
+			if (($linesdone + 1) < $totallines)
+			{
+				$unpacked = unpack("C", substr($unfiltereddata, ($pixelpoint * $cdepth) + (($linesdone + 1) * $linelength) + 1 + 3 + $ll, 1));
+				$unpacked += $colerror[$ll]/16;
+				if ($unpacked > 255) { $unpacked = 255; }
+				elsif ($unpacked < 0) { $unpacked = 0; }
+				substr($unfiltereddata, ($pixelpoint * $cdepth) + (($linesdone + 1) * $linelength) + 1 + 3 + $ll, 1) = pack("C", $unpacked);
+			}
+		}
+		if (($linesdone + 1) < $totallines)
+		{
+			$unpacked = unpack("C", substr($unfiltereddata, ($pixelpoint * $cdepth) + (($linesdone + 1) * $linelength) + 1 + $ll, 1));
+			$unpacked += ($colerror[$ll] * 5)/16;
+			if ($unpacked > 255) { $unpacked = 255; }
+			elsif ($unpacked < 0) { $unpacked = 0; }
+			substr($unfiltereddata, ($pixelpoint * $cdepth) + (($linesdone + 1) * $linelength) + 1 + $ll, 1) = pack("C", $unpacked);
+			if ($pixelpoint > 0) { 
+				$unpacked = unpack("C", substr($unfiltereddata, ($pixelpoint * $cdepth) + (($linesdone + 1) * $linelength) + 1 - 3 + $ll, 1));
+				$unpacked += ($colerror[$ll] * 3)/16;
+				if ($unpacked > 255) { $unpacked = 255; }
+				elsif ($unpacked < 0) { $unpacked = 0; }
+				substr($unfiltereddata, ($pixelpoint * $cdepth) + ($linesdone + 1 * $linelength) + 1 - 3 + $ll, 1) = pack("C", $unpacked);
+			}
+		}
+	}
+
+	return ($palnumber, $unfiltereddata);
+}
+									
+
 
 sub palettize {
 	# take PNG and count colours
@@ -1115,13 +1195,16 @@ sub palettize {
 	$colour_limit = shift; 
 	#0 means no limit
 	$colour_limit = 0 unless $colour_limit;
+	my $dither = shift;
+	$dither = 0 unless $dither;
 	$filtereddata = getuncompressed_data($blobin);
 	%ihdr = %{getihdr($blobin)};
 	my $unfiltereddata = unfilter($filtereddata, \%ihdr);
-	($colours, $colourlist) = countcolours($unfiltereddata, $colour_limit, \%ihdr);
+	($colours, $colourlist) = countcolours($unfiltereddata, 0, \%ihdr);
 	if ($colours < 1) {return $blobin;}
-	if ($colours < 256) {return indexcolours($blobin);}
-	($paloutref, $pallookref) =  index_mediancut($colours, $colourlist, 256);
+	if (($colours < 256)&&(($colours < $colour_limit)||($colour_limit == 0))) {return indexcolours($blobin);}
+	if ($colour_limit > 256) {return undef;}
+	($paloutref, $pallookref) =  index_mediancut($colourlist, $colour_limit);
 	#have to rewrite the whole thing now
 	#start with the PNG header
 	$blobout = pack("C8", (137, 80, 78, 71, 13, 10, 26, 10));
@@ -1149,7 +1232,7 @@ sub palettize {
 				my @colourlist = @$paloutref;
 				my $palcount = 0;
 				foreach $x (@colourlist)
-				{	
+				{
 					$pal_chunk = $pal_chunk.pack("C", ($x & 0xFF));
 				}
 				my $pal_crc = crc32("PLTE".$pal_chunk);
@@ -1163,6 +1246,7 @@ sub palettize {
 				my $cdepth = comp_width(\%ihdr);
 				my $linelength = $width * $cdepth + 1;
 				my %colourlookup = %{$pallookref};
+				my ($colour, $palnumber);
 				while ($linesdone < $totallines)
 				{
 					$dataout = $dataout."\0";
@@ -1171,18 +1255,31 @@ sub palettize {
 					{
 						#FIX ME - needs to work with alpha too
 						$colourfound = substr($unfiltereddata, ($pixelpoint * $cdepth) + ($linesdone * $linelength) + 1, $cdepth);
-						my $colour = 0;
+						$colour = 0;
 						for ($x = 0; $x < $cdepth; $x++)
 						{
-							$colour = $colour + ord(substr($colourfound, $x, 1))*(256**($cdepth - 1 - $x));
+							$colour = ($colour<<8|ord(substr($colourfound, $x, 1)));		
+						}
+						if ($dither == 1)
+						{
+							#add the new match to the palette if required
+							if (!$colourlookup{$colour}) {
+								my $palnumb;
+								($palnumb, $unfiltereddata) = dither($colour, $unfiltereddata, $cdepth, $linesdone, $pixelpoint, $totallines, \%colourlookup, $paloutref, $pal_chunk, $width);
+								$colourlookup{$colour} = $palnumb;
+							}
+							else {
+								#process the error but leave the palette alone
+								my $palnumb;
+								($palnumb, $unfiltereddata) = dither($colour, $unfiltereddata, $cdepth, $linesdone, $pixelpoint, $totallines, \%colourlookup, $paloutref, $pal_chunk, $width);
+							}
 						}
 						$dataout = $dataout.pack("C", $colourlookup{$colour});
 						$pixelpoint++;
-					}
+					}	
 					$linesdone++;
 				}
 				#now to deflate $dataout to get proper stream
-					
 				my $rfc1950stuff = pack("C2", (0x78, 0x5E));
 				my $rfc1951stuff = shrinkchunk($dataout, Z_DEFAULT_STRATEGY, Z_BEST_SPEED);
 				my $output = "IDAT".$rfc1950stuff.$rfc1951stuff.pack("N", adler32($dataout));
@@ -1259,14 +1356,15 @@ Image::Pngslimmer - slims (dynamically created) PNGs
 
 =head1 SYNOPSIS
 
-	$ping = ispng($blob)			#is this a PNG? $ping == 1 if it is
-	$newblob = discard_noncritical($blob)  	#discard non critcal chunks and return a new PNG
-	my @chunklist = analyze($blob) 		#get the chunklist as an array
-	$newblob = zlibshrink($blob)		#attempt to better compress the PNG
-	$newblob = filter($blob)		#apply adaptive filtering and then compress
-	$newblob = indexcolours($blob)		#attempt to replace RGB IDAT with palette (losslessly)
-	$newblob = palettize($blob)		#replace RGB IDAT with colour index palette (usually lossy)
-	\%colourhash = reportcolours($blob)	#print details of the colours in the PNG
+	$ping = ispng($blob)				#is this a PNG? $ping == 1 if it is
+	$newblob = discard_noncritical($blob)  		#discard non critcal chunks and return a new PNG
+	my @chunklist = analyze($blob) 			#get the chunklist as an array
+	$newblob = zlibshrink($blob)			#attempt to better compress the PNG
+	$newblob = filter($blob)			#apply adaptive filtering and then compress
+	$newblob = indexcolours($blob)			#attempt to replace RGB IDAT with palette (losslessly)
+	$newblob = palettize($blob[, $colourlimit
+					[, $dither]])	#replace RGB IDAT with colour index palette (usually lossy)
+	\%colourhash = reportcolours($blob)		#return details of the colours in the PNG
 	
 
 =head1 DESCRIPTION
@@ -1282,14 +1380,14 @@ of memory the author processes PNGs at about 30KB per second.
 
 =head2 Functions
 
-Call discard_noncritical($blob) on a stream of bytes (eg as created by Perl Magick's
+Call Image::Pngslimmer::discard_noncritical($blob) on a stream of bytes (eg as created by Perl Magick's
 Image::Magick package) to remove sections of the PNG that are not essential for display.
 
 Do not expect this to result in a big saving - the author suggests maybe 200 bytes is typical
 - but in an environment such as the backend of J2ME applications that may still be a 
 worthwhile reduction.
 
-discard_noncritical($blob) will call ispng($blob) before attempting to manipulate the
+Image::Pngslimmer::discard_noncritical($blob) will call ispng($blob) before attempting to manipulate the
 supplied stream of bytes - hopefully, therefore, avoiding the accidental mangling of 
 JPEGs or other files. ispng checks for PNG definition conformity -
 it looks for a correct signature, an image header (IHDR) chunk in the right place, looks
@@ -1297,31 +1395,35 @@ for (but does not check in any way) an image data (IDAT) chunk and checks there 
 end (IEND) chunk in the right place. From version 0.03 onwards ispng also checks CRC
 values.
 
-analyze($blob) is supplied for completeness and to aid debugging. It is not called by 
+Image::Pngslimmer::analyze($blob) is supplied for completeness and to aid debugging. It is not called by 
 discard_noncritical but may be used to show 'before-and-after' to demonstrate the savings
 delivered by discard_noncritical.
 
-zlibshrink($blob) will attempt to better compress the supplied PNG and will achieve good results
+Image::Pngslimmer::zlibshrink($blob) will attempt to better compress the supplied PNG and will achieve good results
 with poorly compressed PNGs.
 
-filter($blob) will attempt to apply adaptive filtering to the PNG - filtering should deliver 
+Image::Pngsimmer::filter($blob) will attempt to apply adaptive filtering to the PNG - filtering should deliver 
 better compression results (though the results can be mixed).  Please note that filter() will 
 compress the image with Z_BEST_SPEED and so the blob returned from the function may even be larger
 than the blob passed in. You must call zlibshrink if you want to recompress the blob at maximum level.
 All PNG compression and filtering is lossless.
 
-indexcolours($blob) will attempt to replace an RGB image with a colourmapped image. NB This is not the
+Image::Pngslimmer::indexcolours($blob) will attempt to replace an RGB image with a colourmapped image. NB This is not the
 same as quantization - this process is lossless, but also only works if there are less than 256
 colours in the image.
 
-palettize($blob) will replace a 24 bit RGB image with a colourmapped (256 colours) image. If the original
-image has less than 256 colours it will do this by calling indexcolours and so losslessly process
-the image. More generally it will process the image using the lossy median cut algorithm. Currently no
-dithering is applied and this only works for 24 bit images. Again this process is slow - the author can
-process images at about 7.5KB per second - meaning it can be used for J2ME in "real time" but is
-likely to be too slow for many other dynamic uses.
+Image::Pngslimmer::palettize($blob[, $colourlimit[, $dither]]) will replace a 24 bit RGB image with a colourmapped 
+(256 or less colours) image. If the original image has less than $colourlimit colours it will do this by calling 
+indexcolours and so losslessly process the image. More generally it will process the image using the lossy median 
+cut algorithm. Currently this only works for 24 bit images. Again this process is slow - the author can
+process images at about 30KB per second - meaning it can be used for J2ME in "real time" but is
+likely to be too slow for many other dynamic uses. Setting $colourlimit between 1 and 255 allows control over
+the size of the generated palette (the default is 0 which generates a 256 colour palette). Setting $dither to
+1 will turn on the EXTREMELY SLOW (a 150k image takes over three hours on the author's machine) dithering. It is
+not recommended.
 
-reportcolours($blob) will print details of the colours in the supplied $blob.
+$hashref  = Image::Pngslimmer::reportcolours($blob) will return a reference to a hash with a frequency table
+of the colours in the image.
 
 =head1 LICENCE AND COPYRIGHT
 
@@ -1339,10 +1441,9 @@ It is copyright (c) Adrian McMenamin, 2006, 2007
 =head1 TODO
 
 To make Pngslimmer really useful it needs to handle a broader range of bit map depths etc. The
-work goes on.
+work goes on. At the moment it really only works well with 24 bit images (though discard_noncritical
+will work with all PNGs).
 
-Please note that from version 0.12 Image::Pngslimmer will handle PNGs with muliple IDAT
-chunks.
 
 =head1 AUTHOR
 
