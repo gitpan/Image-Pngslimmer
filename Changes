@@ -1,5 +1,8 @@
 Revision history for Perl extension Image::Pngslimmer.
 
+0.16  Sun Mar 11 16:08:00 2007
+	- bug fix for 0.15 dithering
+
 0.15  Sat Mar 10 17:02:00
 	- adds very slow dithering
 

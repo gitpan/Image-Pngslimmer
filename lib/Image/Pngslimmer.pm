@@ -27,7 +27,7 @@ our @EXPORT = qw(
 	
 );
 
-our $VERSION = '0.15';
+our $VERSION = '0.16';
 
 
 sub checkcrc {
@@ -1072,7 +1072,7 @@ sub closestmatch_inRGB {
 	{
 		$pR = $pallist[$x * 3] - $ciR;
 		$pG = $pallist[$x * 3 + 1] - $ciG;
-		$pB = $pallist[$x + 3 + 2] - $ciB;
+		$pB = $pallist[$x * 3 + 2] - $ciB;
 		my $newdistance =  $pR * $pR + $pG * $pG + $pB * $pB;
 		if ($newdistance < $distance) {
 			$distance = $newdistance;
