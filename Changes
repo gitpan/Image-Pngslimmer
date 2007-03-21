@@ -1,5 +1,8 @@
 Revision history for Perl extension Image::Pngslimmer.
 
+0.20  Wed Mar 21 22:51:00 2007
+	- replaced Math:NumberCruncher for much better performance
+
 0.16  Sun Mar 11 16:08:00 2007
 	- bug fix for 0.15 dithering
 

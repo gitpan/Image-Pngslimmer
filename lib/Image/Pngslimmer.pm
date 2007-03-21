@@ -5,8 +5,7 @@ use strict;
 use warnings;
 use Compress::Zlib;
 use Compress::Raw::Zlib;
-use Math::NumberCruncher;
-use POSIX;
+use POSIX();
 
 require Exporter;
 
@@ -27,7 +26,7 @@ our @EXPORT = qw(
 	
 );
 
-our $VERSION = '0.16';
+our $VERSION = '0.20';
 
 
 sub checkcrc {
@@ -380,7 +379,7 @@ sub filter_ave {
 				$left_predictor = 0;
 			}
 			$avebyte =  ($top_predictor + $left_predictor)/2;
-			$avebyte = floor($avebyte);
+			$avebyte = POSIX::floor($avebyte);
 			$newbyte = ($origbyte - $avebyte)%256;
 			$filtereddata = $filtereddata.pack("C", $newbyte);
 			$count_width++;
@@ -679,7 +678,7 @@ sub unfilterave {
 			$addition_left = unpack("C", substr($lineout, $pointis - $compwidth - 1, 1));
 		}
 		else {$addition_left = 0;}
-		$addition = floor(($addition_up + $addition_left)/2);
+		$addition = POSIX::floor(($addition_up + $addition_left)/2);
 		$reconbyte = ($reconbyte + $addition)%256;
 		$lineout = $lineout.pack("C", $reconbyte);
 		$pointis++;
@@ -766,7 +765,7 @@ sub unfilter {
 
 sub countcolours {
 	my ($chunk, $limit, %colourlist, %ihdr, $ihdr, $totallines, $width, $cdepth, $x, $colourfound);
-	($chunk, $limit, $ihdr) = @_;
+	($chunk, $ihdr) = @_;
 	%ihdr = %{$ihdr};
 	$totallines = $ihdr{"imageheight"};
 	$width = $ihdr{"imagewidth"};
@@ -784,15 +783,13 @@ sub countcolours {
 			my $colour = 0;
 			for ($x = 0; $x < $cdepth; $x++)
 			{
-				$colour = $colour + ord(substr($colourfound, $x, 1))*(256**($cdepth - 1 - $x));
+				$colour = $colour<<8|ord(substr($colourfound, $x, 1));
+			#	$colour = $colour + ord(substr($colourfound, $x, 1))*(256**($cdepth - 1 - $x));
 			}
 			if (defined($colourlist{$colour})) { $colourlist{$colour}++;}
 			else {
 				$colourlist{$colour} = 1;
 				$coloursfound++;
-				if (($coloursfound > $limit) && ($limit > 0)) {
-					return (0, 0);
-				}
 			}
 			$pixelpoint++;
 		}
@@ -821,7 +818,7 @@ sub reportcolours {
 	$filtereddata = getuncompressed_data($blobin);
 	%ihdr = %{getihdr($blobin)};
 	my $unfiltereddata = unfilter($filtereddata, \%ihdr);
-	($colours, $colourlist) = countcolours($unfiltereddata, 0, \%ihdr);
+	($colours, $colourlist) = countcolours($unfiltereddata, \%ihdr);
 	%colourlist = %{$colourlist};
 	my @inputlist = keys(%colourlist);
 	return \%colourlist;
@@ -842,7 +839,7 @@ sub indexcolours {
 	$filtereddata = getuncompressed_data($blobin);
 	%ihdr = %{getihdr($blobin)};
 	my $unfiltereddata = unfilter($filtereddata, \%ihdr);
-	($colours, $colourlist) = countcolours($unfiltereddata, $colour_limit, \%ihdr);
+	($colours, $colourlist) = countcolours($unfiltereddata, \%ihdr);
 	if ($colours < 1) {return $blobin;}
 	#to write out an indexed version $colours has to be less than 256
 	if ($colours < 256) {
@@ -874,7 +871,7 @@ sub indexcolours {
 					my $palcount = 0;
 					foreach $x (keys %colourlist)
 					{	
-						$pal_chunk = $pal_chunk.pack("C3", (($x & 0xFF0000)>>16, ($x & 0xFF00)>>8, $x & 0xFF));
+						$pal_chunk = $pal_chunk.pack("C3", ($x>>16, ($x & 0xFF00)>>8, $x & 0xFF));
 						#use a second hash to record where the colour is in the palette
 						$palindex{$x} = $palcount;
 						$palcount++;
@@ -933,7 +930,7 @@ sub indexcolours {
 sub convert_toxyz {
 	#convert 24 bit number to cartesian point
 	my $inpoint = shift;
-	return (($inpoint & 0xFF0000)>>16, ($inpoint & 0xFF00)>>8, $inpoint & 0xFF);
+	return ($inpoint>>16, ($inpoint & 0xFF00)>>8, $inpoint & 0xFF);
 }
 
 sub convert_tocolour {
@@ -968,8 +965,7 @@ sub getaxis_details {
 	@boundingbox = @$boundingbox;
 	if (scalar(@boundingbox) == 3) {
 		#trap 1 colour case
-		@details = (0, 0);
-		return @details;
+		return (0, 0);
 	}
 	$longestaxis = 0;
 	my @lengths;
@@ -981,31 +977,28 @@ sub getaxis_details {
 		if ($lengths[$i] > $lengths[$longestaxis]) { $longestaxis = $i;}
 	}
 	my $longestaxis_cor = 2 - $longestaxis;
-	@details = ($longestaxis_cor, $lengths[$longestaxis]);
-	return @details;
+	return ($longestaxis_cor, $lengths[$longestaxis]);
 }
 
 
 sub getbiggestbox {
 	#return the index to the biggest box
-	my ($boxesin, @boxesin, $numberofboxes, $i, @sizes, $n);
+	my ($boxesin, @boxesin, $i, $n);
 	$boxesin = shift;
 	@boxesin = @$boxesin;
-	$numberofboxes = scalar(@boxesin)/4;
-	$n = $numberofboxes; #each box has 4 items stored about it
+	$n = scalar(@boxesin)/4; #each box has 4 items stored about it
 	my $z = 0;
+	my $counter = 0;
 	my $biggest = 0;
 	for ($i = 0; $i < $n; $i++)
 	{
-		my $colours = $boxesin[$i * 4 + 1];
-		my @colours = @$colours;
 		#length is 4th item per box
-		if ($boxesin[$i * 4 + 3] > $z)
+		$counter = $i * 4 + 3;
+		if ($boxesin[$counter] > $z)
 		{
-			$z = $boxesin[$i * 4 + 3];
+			$z = $boxesin[$counter];
 			$biggest = $i;
 		}
-			
 	}
 	return $biggest;
 }
@@ -1014,10 +1007,11 @@ sub sortonaxes {
 	my ($boundingref, $coloursref, $longestaxis, $lengthofaxis) = @_;
 	my (@colours, $x, %distances, $distance, @outputlist, @newcolours);
 	@newcolours = @$coloursref;
+	my $axisfactor = 8 * $longestaxis;
 	foreach $x (@newcolours)
 	{
 		#FIX ME: Only works for 24 bit images
-		$distance = ($x>>(8 * $longestaxis))&0xFF;
+		$distance = ($x>>$axisfactor)&0xFF;
 		$distances{$x} = $distance;
 	}
 	foreach $x (sort {$distances{$a} <=> $distances{$b}} keys %distances)
@@ -1025,6 +1019,22 @@ sub sortonaxes {
 		push @outputlist, $x;
 	}
 	return \@outputlist;
+}
+
+sub getRGBbox {
+	my @points = @_;
+	my ( @reds, @greens, @blues, $numb, $x);
+	$numb = @points;
+	for ($x = 0; $x < $numb; $x += 3)
+	{
+		push @reds, $points[$x];
+		push @greens, $points[$x + 1];
+		push @blues, $points[$x + 2];
+	}
+	@reds = sort {$a <=> $b} @reds;
+	@greens = sort {$a <=> $b} @greens;
+	@blues = sort {$a <=> $b} @blues;
+	return ($reds[0], $greens[0], $blues[0], $reds[$numb/3 - 1], $greens[$numb/3 - 1], $blues[$numb/3 - 1]);
 }
 
 sub generate_box {
@@ -1037,7 +1047,7 @@ sub generate_box {
 		push @colourpoints, convert_toxyz($x);
 	}
 	if (scalar(@colourpoints) == 3) { return \@colourpoints;}
-	@boundary = Math::NumberCruncher::BoundingBox_Points(3, @colourpoints);
+	@boundary = getRGBbox(@colourpoints);
 	return \@boundary;
 }	
 
@@ -1048,7 +1058,6 @@ sub getpalette {
 	my $colnumbers = scalar(@boxes)/4;
 	for ($x = 0; $x < $colnumbers; $x++)
 	{
-		
 		$colours = $boxes[$x * 4 + 1];
 		@colours = @$colours;
 		push @palette, getcolour_ave(@colours);
@@ -1061,34 +1070,33 @@ sub getpalette {
 }
 
 sub closestmatch_inRGB {
-	my ($distance, $index, $colourin, $ciR, $ciG, $ciB, $pR, $pG, $pB, $palref, $maxindex, $cdepth, $x);
+	my ($distance, $index, $colourin, $ciR, $ciG, $ciB, $pR, $pG, $pB, $palref, $maxindex, $cdepth, $x, $q);
 	($palref, $colourin, $cdepth) = @_;
 	my @pallist = @$palref;
 	$index = 0;
-	$distance = 0xFFFFFF * 0xFFFFFF; #max distance it could be
+	$distance = 0xFFFFFFFF; #big distance to start
 	$maxindex = scalar(@pallist)/3; # assuming three colours
 	($ciR, $ciG, $ciB) = convert_toxyz($colourin);
 	for ($x = 0; $x < $maxindex; $x++)
 	{
-		$pR = $pallist[$x * 3] - $ciR;
-		$pG = $pallist[$x * 3 + 1] - $ciG;
-		$pB = $pallist[$x * 3 + 2] - $ciB;
+		$q = $x * 3;
+		$pR = $pallist[$q] - $ciR;
+		$pG = $pallist[$q + 1] - $ciG;
+		$pB = $pallist[$q + 2] - $ciB;
 		my $newdistance =  $pR * $pR + $pG * $pG + $pB * $pB;
 		if ($newdistance < $distance) {
 			$distance = $newdistance;
 			$index = $x;
+			if ($distance <=9) {return $index;} #probably a good enough match!
 		}
 	}
 	return $index; #should be the closest palette entry
 }
 		
-		
-	
-		
 	
 sub index_mediancut {
 	my ($colour_numbers, $colourlist, %colourlist, @colourkeys, @boundingbox, @colourpoints, $colourspaces, $colcount, @boxes);
-	my ($boxtocut, @biggestbox, @sortedcolours, $median, @lowercolours, @newbox, $biggestbox);
+	my ($boxtocut, @biggestbox, $median, @newbox, $biggestbox);
 	my (@palette, %lookup, $lookup, $palref, $lookupref, @axisstuff, $sortedcolours, $boxout);
 	($colourlist, $colourspaces) = @_;
 	if (!defined($colourspaces)||($colourspaces == 0)) {$colourspaces = 256;}
@@ -1103,24 +1111,25 @@ sub index_mediancut {
 	push @boxes, getaxis_details(generate_box(@colourkeys));
 	do {
 		#find the biggest box
-		@biggestbox = ();
 		$boxtocut = getbiggestbox(\@boxes);
 		@biggestbox = splice(@boxes, $boxtocut * 4, 4);
 		#now sort on the axis
 		$sortedcolours = sortonaxes(@biggestbox);
 		my @sortedcolours = @$sortedcolours;
-		$median = floor(scalar(@sortedcolours)/2);
+		$median = POSIX::floor(scalar(@sortedcolours)/2);
 		#cut the colours in half
 		my @lowercolours = splice(@sortedcolours, 0, $median);
 		#generate two boxes
-		push @boxes, generate_box(@lowercolours);
+		my $refboxa = generate_box(@lowercolours);
+		push @boxes, $refboxa;
 		push @boxes, \@lowercolours;
-		push @boxes, getaxis_details(generate_box(@lowercolours));
-		push @boxes, generate_box(@sortedcolours);
+		push @boxes, getaxis_details($refboxa);
+		my $refboxb = generate_box(@sortedcolours);
+		push @boxes, $refboxb;
 		push @boxes, \@sortedcolours;
-		push @boxes, getaxis_details(generate_box(@sortedcolours));
+		push @boxes, getaxis_details($refboxb);
 		$colcount = scalar(@boxes) /4;
-	} while ($colcount < $colourspaces);
+	} until ($colourspaces == $colcount);
 	return getpalette(@boxes);
 }
 		
@@ -1143,50 +1152,55 @@ sub dither {
 	$colerror[1] = $gcomp - $rg;
 	$colerror[2] = $bcomp - $rb;
 	#now diffuse the errors
-	my ($unpacked);
-	for (my $ll = 0; $ll < 3; $ll++)
+	my ($unpacked, $max_value);
+	if ($cdepth == 6) {$max_value = 0xFFFF;}
+	else {$max_value = 0xFF;}
+	my $currentoffset_w = $pixelpoint * $cdepth;
+	my $currentoffset_h = $linesdone * $linelength;
+	my $nextoffset_h = ($linesdone + 1) * $linelength;
+	for (my $ll = 0; $ll < $cdepth; $ll++)
 	{
 		if (($pixelpoint + 1) < $width) { 
-			$unpacked = unpack("C", substr($unfiltereddata, ($pixelpoint * $cdepth) + ($linesdone * $linelength) + 1 + 3 + $ll, 1));
+			$unpacked = unpack("C", substr($unfiltereddata, $currentoffset_w + $currentoffset_h + 1 + $cdepth + $ll, 1));
 			$unpacked += ($colerror[$ll] * 7)/16;
-			if ($unpacked > 255) { $unpacked = 255; }
+			if ($unpacked > $max_value) { $unpacked = $max_value; }
 			elsif ($unpacked < 0) { $unpacked = 0; }
-			substr($unfiltereddata, ($pixelpoint * $cdepth) + ($linesdone * $linelength) + 1 + 3 + $ll, 1) = pack("C", $unpacked);
+			substr($unfiltereddata, $currentoffset_w + $currentoffset_h + 1 + $cdepth + $ll, 1) = pack("C", $unpacked);
 			if (($linesdone + 1) < $totallines)
 			{
-				$unpacked = unpack("C", substr($unfiltereddata, ($pixelpoint * $cdepth) + (($linesdone + 1) * $linelength) + 1 + 3 + $ll, 1));
+				$unpacked = unpack("C", substr($unfiltereddata, $currentoffset_w + (($linesdone + 1) * $linelength) + 1 + $cdepth + $ll, 1));
 				$unpacked += $colerror[$ll]/16;
-				if ($unpacked > 255) { $unpacked = 255; }
+				if ($unpacked > $max_value) { $unpacked = $max_value; }
 				elsif ($unpacked < 0) { $unpacked = 0; }
-				substr($unfiltereddata, ($pixelpoint * $cdepth) + (($linesdone + 1) * $linelength) + 1 + 3 + $ll, 1) = pack("C", $unpacked);
+				substr($unfiltereddata, $currentoffset_w + $nextoffset_h + 1 + $cdepth + $ll, 1) = pack("C", $unpacked);
 			}
 		}
 		if (($linesdone + 1) < $totallines)
 		{
-			$unpacked = unpack("C", substr($unfiltereddata, ($pixelpoint * $cdepth) + (($linesdone + 1) * $linelength) + 1 + $ll, 1));
+			$unpacked = unpack("C", substr($unfiltereddata, $currentoffset_w + $nextoffset_h + 1 + $ll, 1));
 			$unpacked += ($colerror[$ll] * 5)/16;
-			if ($unpacked > 255) { $unpacked = 255; }
+			if ($unpacked > $max_value) { $unpacked = $max_value; }
 			elsif ($unpacked < 0) { $unpacked = 0; }
-			substr($unfiltereddata, ($pixelpoint * $cdepth) + (($linesdone + 1) * $linelength) + 1 + $ll, 1) = pack("C", $unpacked);
+			substr($unfiltereddata, $currentoffset_w + $nextoffset_h + 1 + $ll, 1) = pack("C", $unpacked);
 			if ($pixelpoint > 0) { 
-				$unpacked = unpack("C", substr($unfiltereddata, ($pixelpoint * $cdepth) + (($linesdone + 1) * $linelength) + 1 - 3 + $ll, 1));
+				$unpacked = unpack("C", substr($unfiltereddata, $currentoffset_w + $nextoffset_h + 1 - $cdepth + $ll, 1));
 				$unpacked += ($colerror[$ll] * 3)/16;
-				if ($unpacked > 255) { $unpacked = 255; }
+				if ($unpacked > $max_value) { $unpacked = $max_value; }
 				elsif ($unpacked < 0) { $unpacked = 0; }
-				substr($unfiltereddata, ($pixelpoint * $cdepth) + ($linesdone + 1 * $linelength) + 1 - 3 + $ll, 1) = pack("C", $unpacked);
+				substr($unfiltereddata, $currentoffset_w + $nextoffset_h + 1 - $cdepth + $ll, 1) = pack("C", $unpacked);
 			}
 		}
 	}
 
 	return ($palnumber, $unfiltereddata);
 }
-									
 
+	
 
 sub palettize {
 	# take PNG and count colours
 	my ($colour_limit, $blobin, $filtereddata, %ihdr, $ihdr, $blobout, $ihdr_chunk, $pal_chunk, $x, %palindex, $palindex, $colourfound);
-	my ($colourlist, %colourlist, $colours, $paloutref, $pallookref);
+	my ($colourlist, %colourlist, $colours, $paloutref, $pallookref, $palnumb);
 	$blobin = shift;
 	#is it a PNG
 	return $blobin unless ispng($blobin) > 0;
@@ -1200,7 +1214,7 @@ sub palettize {
 	$filtereddata = getuncompressed_data($blobin);
 	%ihdr = %{getihdr($blobin)};
 	my $unfiltereddata = unfilter($filtereddata, \%ihdr);
-	($colours, $colourlist) = countcolours($unfiltereddata, 0, \%ihdr);
+	($colours, $colourlist) = countcolours($unfiltereddata, \%ihdr);
 	if ($colours < 1) {return $blobin;}
 	if (($colours < 256)&&(($colours < $colour_limit)||($colour_limit == 0))) {return indexcolours($blobin);}
 	if ($colour_limit > 256) {return undef;}
@@ -1233,7 +1247,7 @@ sub palettize {
 				my $palcount = 0;
 				foreach $x (@colourlist)
 				{
-					$pal_chunk = $pal_chunk.pack("C", ($x & 0xFF));
+					$pal_chunk = $pal_chunk.pack("C", $x);					
 				}
 				my $pal_crc = crc32("PLTE".$pal_chunk);
 				my $len_pal = length($pal_chunk);
@@ -1251,10 +1265,11 @@ sub palettize {
 				{
 					$dataout = $dataout."\0";
 					my $pixelpoint = 0;
+					my $linemarker = $linesdone * $linelength + 1;
 					while ($pixelpoint < $width)
 					{
 						#FIX ME - needs to work with alpha too
-						$colourfound = substr($unfiltereddata, ($pixelpoint * $cdepth) + ($linesdone * $linelength) + 1, $cdepth);
+						$colourfound = substr($unfiltereddata, ($pixelpoint * $cdepth) + $linemarker, $cdepth);
 						$colour = 0;
 						for ($x = 0; $x < $cdepth; $x++)
 						{
@@ -1264,13 +1279,11 @@ sub palettize {
 						{
 							#add the new match to the palette if required
 							if (!$colourlookup{$colour}) {
-								my $palnumb;
 								($palnumb, $unfiltereddata) = dither($colour, $unfiltereddata, $cdepth, $linesdone, $pixelpoint, $totallines, \%colourlookup, $paloutref, $pal_chunk, $width);
 								$colourlookup{$colour} = $palnumb;
 							}
 							else {
 								#process the error but leave the palette alone
-								my $palnumb;
 								($palnumb, $unfiltereddata) = dither($colour, $unfiltereddata, $cdepth, $linesdone, $pixelpoint, $totallines, \%colourlookup, $paloutref, $pal_chunk, $width);
 							}
 						}
@@ -1436,7 +1449,6 @@ It is copyright (c) Adrian McMenamin, 2006, 2007
 	POSIX
 	Compress::Zlib
 	Compress::Raw::Zlib
-	Math::NumberCruncher
 
 =head1 TODO
 
