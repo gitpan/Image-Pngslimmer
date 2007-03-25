@@ -26,7 +26,7 @@ our @EXPORT = qw(
 	
 );
 
-our $VERSION = '0.20';
+our $VERSION = '0.21';
 
 
 sub checkcrc {
@@ -784,7 +784,6 @@ sub countcolours {
 			for ($x = 0; $x < $cdepth; $x++)
 			{
 				$colour = $colour<<8|ord(substr($colourfound, $x, 1));
-			#	$colour = $colour + ord(substr($colourfound, $x, 1))*(256**($cdepth - 1 - $x));
 			}
 			if (defined($colourlist{$colour})) { $colourlist{$colour}++;}
 			else {
@@ -940,7 +939,7 @@ sub convert_tocolour {
 }
 
 sub getcolour_ave {
-	my ($red, $green, $blue, @coloursin, $coloursin, $numb, $x, @cartesians, $cartesians);
+	my ($red, $green, $blue, @coloursin, $numb, $x, @cartesians);
 	@coloursin = @_;
 	$numb = scalar(@coloursin);
 	if ($numb == 0) { return (0,0,0); };
@@ -951,9 +950,9 @@ sub getcolour_ave {
 		$green += $cartesians[1];
 		$blue += $cartesians[2];
 	}
-	$red = ($red/$numb)%256;
-	$green = ($green/$numb)%256;
-	$blue = ($blue/$numb)%256;
+	$red = ($red/$numb);
+	$green = ($green/$numb);
+	$blue = ($blue/$numb);
 	return ($red, $green, $blue);
 }
 
@@ -1007,6 +1006,12 @@ sub sortonaxes {
 	my ($boundingref, $coloursref, $longestaxis, $lengthofaxis) = @_;
 	my (@colours, $x, %distances, $distance, @outputlist, @newcolours);
 	@newcolours = @$coloursref;
+	if ($longestaxis == 2)
+	{
+		#can just sort on the whole number if red
+		@newcolours = sort {$a <=> $b} @newcolours;
+		return \@newcolours;
+	}
 	my $axisfactor = 8 * $longestaxis;
 	foreach $x (@newcolours)
 	{
@@ -1034,7 +1039,7 @@ sub getRGBbox {
 	@reds = sort {$a <=> $b} @reds;
 	@greens = sort {$a <=> $b} @greens;
 	@blues = sort {$a <=> $b} @blues;
-	return ($reds[0], $greens[0], $blues[0], $reds[$numb/3 - 1], $greens[$numb/3 - 1], $blues[$numb/3 - 1]);
+	return (shift @reds, shift @greens, shift @blues, pop @reds, pop @greens, pop @blues);
 }
 
 sub generate_box {
@@ -1093,7 +1098,6 @@ sub closestmatch_inRGB {
 	return $index; #should be the closest palette entry
 }
 		
-	
 sub index_mediancut {
 	my ($colour_numbers, $colourlist, %colourlist, @colourkeys, @boundingbox, @colourpoints, $colourspaces, $colcount, @boxes);
 	my ($boxtocut, @biggestbox, $median, @newbox, $biggestbox);
@@ -1102,16 +1106,18 @@ sub index_mediancut {
 	if (!defined($colourspaces)||($colourspaces == 0)) {$colourspaces = 256;}
 	$colcount = 0;
 	%colourlist = %{$colourlist};
-	@colourkeys = keys(%colourlist);
+	@colourkeys = sort {$a <=> $b} keys(%colourlist);
 	#can now define the colour space
 	# boxes data is 
 	# reftoboundingboxarray, reftocoloursarray, longest_axis, length_of_longest_axis
-	push @boxes, generate_box(@colourkeys);
+	my $refbigbox = generate_box(@colourkeys);
+	push @boxes, $refbigbox;
 	push @boxes, \@colourkeys;
-	push @boxes, getaxis_details(generate_box(@colourkeys));
+	push @boxes, getaxis_details($refbigbox);
+	$boxtocut = 0;
 	do {
 		#find the biggest box
-		$boxtocut = getbiggestbox(\@boxes);
+		$boxtocut = getbiggestbox(\@boxes) unless $colcount == 0;
 		@biggestbox = splice(@boxes, $boxtocut * 4, 4);
 		#now sort on the axis
 		$sortedcolours = sortonaxes(@biggestbox);

@@ -14,8 +14,6 @@ print "Input file looks like this:\n";
 print Image::Pngslimmer::analyze($blob1);
 $lengthfat = length($blob1);
 print "Input file is $lengthfat bytes long\n";
-print "Colour information is:\n";
-Image::Pngslimmer::reportcolours($blob1);
 $blob2 = Image::Pngslimmer::palettize($blob1, 0, 1);
 $lengthslim = length($blob2);
 print "After colour indexation the file is $lengthslim bytes long.\n";
