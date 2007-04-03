@@ -26,7 +26,7 @@ our @EXPORT = qw(
 	
 );
 
-our $VERSION = '0.21';
+our $VERSION = '0.22';
 
 
 sub checkcrc {
@@ -255,12 +255,11 @@ sub comp_width {
 	#FIX ME: only works for colour depth > 8
 	my ($ihdr, %ihdr);
 	$ihdr = shift;
-	%ihdr = %{$ihdr};
-	my $lines = $ihdr{"imageheight"};
-	my $pixels = $ihdr{"imagewidth"};
+	my $lines = $ihdr->{"imageheight"};
+	my $pixels = $ihdr->{"imagewidth"};
 	my $comp_width = 3;
-	my $ctype = $ihdr{"colourtype"};
-	my $bdepth = $ihdr{"bitdepth"};
+	my $ctype = $ihdr->{"colourtype"};
+	my $bdepth = $ihdr->{"bitdepth"};
 	if ($ctype == 2) { #truecolour with no alpha
 		if ($bdepth == 8) {$comp_width = 3;}
 		else {$comp_width = 6;}
@@ -286,14 +285,13 @@ sub filter_sub {
 	my($origbyte, $leftbyte, $newbyte, $ihdr, $unfiltereddata, $filtereddata);
 	$unfiltereddata = shift;
 	$ihdr = shift;
-	my %ihdr = %{$ihdr};
 	my $count = 0;
 	my $count_width = 0;
 	$newbyte = 0;
-	my $comp_width = comp_width(\%ihdr);
-	my $totalwidth = $ihdr{"imagewidth"} * $comp_width;
+	my $comp_width = comp_width($ihdr);
+	my $totalwidth = $ihdr->{"imagewidth"} * $comp_width;
 	$filtereddata = "";
-	my $lines = $ihdr{"imageheight"};
+	my $lines = $ihdr->{"imageheight"};
 	while ($count < $lines) {
 		#start - add filtertype byte
 		$filtereddata = $filtereddata."\1";
@@ -321,14 +319,13 @@ sub filter_up {
 	my($origbyte, $upbyte, $newbyte, $ihdr, $unfiltereddata, $filtereddata);
 	$unfiltereddata = shift;
 	$ihdr = shift;
-	my %ihdr = %{$ihdr};
-	my $comp_width = comp_width(\%ihdr);
+	my $comp_width = comp_width($ihdr);
 	my $count = 0;
 	my $count_width = 0;
 	$newbyte = 0;
-	my $totalwidth = $ihdr{"imagewidth"} * $comp_width;
+	my $totalwidth = $ihdr->{"imagewidth"} * $comp_width;
 	$filtereddata = "";
-	my $lines = $ihdr{"imageheight"};
+	my $lines = $ihdr->{"imageheight"};
 	while ($count < $lines) {
 		#start - add filtertype byte
 		$filtereddata = $filtereddata."\2";
@@ -355,14 +352,13 @@ sub filter_ave {
 	my($origbyte, $avebyte, $newbyte, $ihdr, $unfiltereddata, $filtereddata, $top_predictor, $left_predictor);
 	$unfiltereddata = shift;
 	$ihdr = shift;
-	my %ihdr = %{$ihdr};
-	my $comp_width = comp_width(\%ihdr);
+	my $comp_width = comp_width($ihdr);
 	my $count = 0;
 	my $count_width = 0;
 	$newbyte = 0;
-	my $totalwidth = $ihdr{"imagewidth"} * $comp_width;
+	my $totalwidth = $ihdr->{"imagewidth"} * $comp_width;
 	$filtereddata = "";
-	my $lines = $ihdr{"imageheight"};
+	my $lines = $ihdr->{"imageheight"};
 	while ($count < $lines) {
 		#start - add filtertype byte
 		$filtereddata = $filtereddata."\3";
@@ -394,14 +390,13 @@ sub filter_paeth {	#paeth predictor type filtering
 	my ($origbyte, $paethbyte_a, $paethbyte_b, $paethbyte_c, $paeth_p, $paeth_pa, $paeth_pb, $paeth_pc, $paeth_predictor, $unfiltereddata, $filtereddata, $newbyte, $ihdr);
 	$unfiltereddata = shift;
 	$ihdr = shift;
-	my %ihdr = %{$ihdr};
-	my $comp_width = comp_width(\%ihdr);
+	my $comp_width = comp_width($ihdr);
 	my $count = 0;
 	my $count_width = 0;
 	$newbyte = 0;
-	my $totalwidth = $ihdr{"imagewidth"} * $comp_width;
+	my $totalwidth = $ihdr->{"imagewidth"} * $comp_width;
 	$filtereddata = "";
-	my $lines = $ihdr{"imageheight"};
+	my $lines = $ihdr->{"imageheight"};
 	while ($count < $lines) {
 		#start - add filtertype byte
 		$filtereddata = $filtereddata."\4";
@@ -444,16 +439,15 @@ sub filterdata {
 	my ($unfiltereddata, $ihdr, $filtereddata, $finalfiltered, $filtered_sub, $filtered_up, $filtered_ave, $filtered_paeth);
 	$unfiltereddata = shift;
 	$ihdr = shift;
-	my %ihdr = %{$ihdr};
-	$filtered_sub = filter_sub($unfiltereddata, \%ihdr);
-	$filtered_up = filter_up($unfiltereddata, \%ihdr);
-	$filtered_ave = filter_ave($unfiltereddata, \%ihdr);
-	$filtered_paeth = filter_paeth($unfiltereddata, \%ihdr);
+	$filtered_sub = filter_sub($unfiltereddata, $ihdr);
+	$filtered_up = filter_up($unfiltereddata, $ihdr);
+	$filtered_ave = filter_ave($unfiltereddata, $ihdr);
+	$filtered_paeth = filter_paeth($unfiltereddata, $ihdr);
 	
 	#TO DO: Try other filters and pick best one
-	my $pixels = $ihdr{"imagewidth"};
-	my $rows = $ihdr{"imageheight"};
-	my $comp_width = comp_width(\%ihdr);
+	my $pixels = $ihdr->{"imagewidth"};
+	my $rows = $ihdr->{"imageheight"};
+	my $comp_width = comp_width($ihdr);
 	my $bytesperline = $pixels * $comp_width;
 	my $countout = 0;
 	my $rows_done = 0;
@@ -532,23 +526,22 @@ sub filter {
 	}
 	#read some basic info about the PNG
 	my $ihdr = getihdr($blobin);
-	my %ihdr = %{$ihdr};
-	if ($ihdr{"colourtype"} == 3) { return $blobin } #already palettized
-	if ($ihdr{"bitdepth"} < 8) { return $blobin; } # colour depth is so low it's not worth it
-	if ($ihdr{"compression"} != 0) {return $blobin;} # non-standard compression
-	if ($ihdr{"filter"} != 0) {return $blobin; } # non-standard filtering
+	if ($ihdr->{"colourtype"} == 3) { return $blobin } #already palettized
+	if ($ihdr->{"bitdepth"} < 8) { return $blobin; } # colour depth is so low it's not worth it
+	if ($ihdr->{"compression"} != 0) {return $blobin;} # non-standard compression
+	if ($ihdr->{"filter"} != 0) {return $blobin; } # non-standard filtering
 
-	if ($ihdr{"interlace"} != 0) {
+	if ($ihdr->{"interlace"} != 0) {
 		#FIX ME: support interlacing
 		return $blobin;
 	}
 	my $datachunk = getuncompressed_data($blobin);
 	unless (defined($datachunk)) {return $blobin;}
-	my $canfilter = linebyline($datachunk, \%ihdr);
+	my $canfilter = linebyline($datachunk, $ihdr);
 	my $preproclen = length($datachunk);
 	if ($canfilter > 0)
 	{
-		$filtereddata = filterdata($datachunk, \%ihdr);
+		$filtereddata = filterdata($datachunk, $ihdr);
 	}
 	else {return $blobin;}
 	my $postproclen = length($filtereddata);
@@ -731,13 +724,12 @@ sub unfilter {
 	my  ($blobin, $chunkin, $chunkout, $ihdr, %ihdr, $imageheight, $imagewidth);
 	$chunkin = shift;
 	$ihdr = shift;
-	%ihdr = %{$ihdr};
-	$imageheight = $ihdr{"imageheight"};
-	$imagewidth = $ihdr{"imagewidth"};
+	$imageheight = $ihdr->{"imageheight"};
+	$imagewidth = $ihdr->{"imagewidth"};
 	#get each line
 	my $lines_done = 0;
 	my $pixels_done = 0;
-	my $comp_width = comp_width(\%ihdr);
+	my $comp_width = comp_width($ihdr);
 	my $linelength = $comp_width * $imagewidth + 1;
 	while ($lines_done < $imageheight)
 	{
@@ -766,10 +758,9 @@ sub unfilter {
 sub countcolours {
 	my ($chunk, $limit, %colourlist, %ihdr, $ihdr, $totallines, $width, $cdepth, $x, $colourfound);
 	($chunk, $ihdr) = @_;
-	%ihdr = %{$ihdr};
-	$totallines = $ihdr{"imageheight"};
-	$width = $ihdr{"imagewidth"};
-	$cdepth = comp_width(\%ihdr);
+	$totallines = $ihdr->{"imageheight"};
+	$width = $ihdr->{"imagewidth"};
+	$cdepth = comp_width($ihdr);
 	my $linesdone = 0;
 	my $linelength = $width * $cdepth + 1;
 	my $coloursfound = 0;
@@ -836,9 +827,9 @@ sub indexcolours {
 	#0 means no limit
 	$colour_limit = 0 unless $colour_limit;
 	$filtereddata = getuncompressed_data($blobin);
-	%ihdr = %{getihdr($blobin)};
-	my $unfiltereddata = unfilter($filtereddata, \%ihdr);
-	($colours, $colourlist) = countcolours($unfiltereddata, \%ihdr);
+	$ihdr = getihdr($blobin);
+	my $unfiltereddata = unfilter($filtereddata, $ihdr);
+	($colours, $colourlist) = countcolours($unfiltereddata, $ihdr);
 	if ($colours < 1) {return $blobin;}
 	#to write out an indexed version $colours has to be less than 256
 	if ($colours < 256) {
@@ -848,10 +839,10 @@ sub indexcolours {
 		#now the IHDR
 		$blobout = $blobout.pack("N", 0x0D);
 		$ihdr_chunk = "IHDR";
-		$ihdr_chunk = $ihdr_chunk.pack("N2", ($ihdr{"imagewidth"}, $ihdr{"imageheight"}));
+		$ihdr_chunk = $ihdr_chunk.pack("N2", ($ihdr->{"imagewidth"}, $ihdr->{"imageheight"}));
 		#FIX ME: Support index of less than 8 bits
 		$ihdr_chunk = $ihdr_chunk.pack("C2", (8, 3)); #8 bit indexed colour
-		$ihdr_chunk = $ihdr_chunk.pack("C3", ($ihdr{"compression"}, $ihdr{"filter"}, $ihdr{"interlace"}));
+		$ihdr_chunk = $ihdr_chunk.pack("C3", ($ihdr->{"compression"}, $ihdr->{"filter"}, $ihdr->{"interlace"}));
 		my $ihdrcrc = crc32($ihdr_chunk);
 		$blobout = $blobout.$ihdr_chunk.pack("N", $ihdrcrc);
 		#now any chunk before the IDAT
@@ -881,9 +872,9 @@ sub indexcolours {
 					#now process the IDAT
 					my $dataout;
 					my $linesdone = 0;
-					my $totallines = $ihdr{"imageheight"};
-					my $width = $ihdr{"imagewidth"};
-					my $cdepth = comp_width(\%ihdr);
+					my $totallines = $ihdr->{"imageheight"};
+					my $width = $ihdr->{"imagewidth"};
+					my $cdepth = comp_width($ihdr);
 					my $linelength = $width * $cdepth + 1;
 					while ($linesdone < $totallines)
 					{
@@ -940,12 +931,13 @@ sub convert_tocolour {
 
 sub getcolour_ave {
 	my ($red, $green, $blue, @coloursin, $numb, $x, @cartesians);
-	@coloursin = @_;
-	$numb = scalar(@coloursin);
+	#@coloursin = @_;
+	my $coloursin = shift;
+	$numb = scalar(@$coloursin);
 	if ($numb == 0) { return (0,0,0); };
 	for ($x = 0; $x < $numb; $x++)
 	{
-		my @cartesians = convert_toxyz($coloursin[$x]);
+		my @cartesians = convert_toxyz($coloursin->[$x]);
 		$red += $cartesians[0];
 		$green += $cartesians[1];
 		$blue += $cartesians[2];
@@ -961,16 +953,12 @@ sub getaxis_details {
 	#return a reference to the longestaxis and its length
 	my ($boundingbox, @boundingbox, $longestaxis, $length, $i, @details);
 	$boundingbox = shift;
-	@boundingbox = @$boundingbox;
-	if (scalar(@boundingbox) == 3) {
-		#trap 1 colour case
-		return (0, 0);
-	}
+	return (0,0) unless defined ($boundingbox->[5]);
 	$longestaxis = 0;
 	my @lengths;
-	$lengths[0] = $boundingbox[3] - $boundingbox[0];
-	$lengths[1] = $boundingbox[4] - $boundingbox[1];
-	$lengths[2] = $boundingbox[5] - $boundingbox[2];
+	$lengths[0] = $boundingbox->[3] - $boundingbox->[0];
+	$lengths[1] = $boundingbox->[4] - $boundingbox->[1];
+	$lengths[2] = $boundingbox->[5] - $boundingbox->[2];
 	for ($i = 1; $i < 3; $i++)
 	{
 		if ($lengths[$i] > $lengths[$longestaxis]) { $longestaxis = $i;}
@@ -979,13 +967,11 @@ sub getaxis_details {
 	return ($longestaxis_cor, $lengths[$longestaxis]);
 }
 
-
 sub getbiggestbox {
 	#return the index to the biggest box
-	my ($boxesin, @boxesin, $i, $n);
+	my ($boxesin, $i, $n);
 	$boxesin = shift;
-	@boxesin = @$boxesin;
-	$n = scalar(@boxesin)/4; #each box has 4 items stored about it
+	$n = shift; 
 	my $z = 0;
 	my $counter = 0;
 	my $biggest = 0;
@@ -993,9 +979,9 @@ sub getbiggestbox {
 	{
 		#length is 4th item per box
 		$counter = $i * 4 + 3;
-		if ($boxesin[$counter] > $z)
+		if ($boxesin->[$counter] > $z)
 		{
-			$z = $boxesin[$counter];
+			$z = $boxesin->[$counter];
 			$biggest = $i;
 		}
 	}
@@ -1026,35 +1012,38 @@ sub sortonaxes {
 	return \@outputlist;
 }
 
+
 sub getRGBbox {
-	my @points = @_;
+	my $points = shift;
 	my ( @reds, @greens, @blues, $numb, $x);
-	$numb = @points;
+	$numb = @$points;
 	for ($x = 0; $x < $numb; $x += 3)
 	{
-		push @reds, $points[$x];
-		push @greens, $points[$x + 1];
-		push @blues, $points[$x + 2];
+		push @reds, $points->[$x];
+		push @greens, $points->[$x + 1];
+		push @blues, $points->[$x + 2];
 	}
 	@reds = sort {$a <=> $b} @reds;
 	@greens = sort {$a <=> $b} @greens;
 	@blues = sort {$a <=> $b} @blues;
-	return (shift @reds, shift @greens, shift @blues, pop @reds, pop @greens, pop @blues);
+	my $boundref = [shift @reds, shift @greens, shift @blues, pop @reds, pop @greens, pop @blues];
+	return $boundref;
+	
 }
 
 sub generate_box {
 	#convert colours to cartesian points
 	#and then return the bounding box
-	my (@colourpoints, $x, @boundary);
-	my @colourset = @_;
-	foreach $x (@colourset)
+	my (@colourpoints, $x);
+	foreach $x (@_)
 	{
 		push @colourpoints, convert_toxyz($x);
 	}
 	if (scalar(@colourpoints) == 3) { return \@colourpoints;}
-	@boundary = getRGBbox(@colourpoints);
-	return \@boundary;
+	my $boundref = getRGBbox(\@colourpoints);
+	return $boundref;
 }	
+
 
 sub getpalette {
 	my ($x, @onebox,  @colours, @palette, %lookup, $lookup, $boxes, $z, $colours);
@@ -1065,7 +1054,7 @@ sub getpalette {
 	{
 		$colours = $boxes[$x * 4 + 1];
 		@colours = @$colours;
-		push @palette, getcolour_ave(@colours);
+		push @palette, getcolour_ave(\@colours);
 		foreach $z (@colours)
 		{
 			$lookup{$z} = $x;
@@ -1106,7 +1095,7 @@ sub index_mediancut {
 	if (!defined($colourspaces)||($colourspaces == 0)) {$colourspaces = 256;}
 	$colcount = 0;
 	%colourlist = %{$colourlist};
-	@colourkeys = sort {$a <=> $b} keys(%colourlist);
+	@colourkeys = keys(%colourlist);
 	#can now define the colour space
 	# boxes data is 
 	# reftoboundingboxarray, reftocoloursarray, longest_axis, length_of_longest_axis
@@ -1117,7 +1106,7 @@ sub index_mediancut {
 	$boxtocut = 0;
 	do {
 		#find the biggest box
-		$boxtocut = getbiggestbox(\@boxes) unless $colcount == 0;
+		$boxtocut = getbiggestbox(\@boxes, $colcount) unless $colcount == 0;
 		@biggestbox = splice(@boxes, $boxtocut * 4, 4);
 		#now sort on the axis
 		$sortedcolours = sortonaxes(@biggestbox);
@@ -1218,9 +1207,9 @@ sub palettize {
 	my $dither = shift;
 	$dither = 0 unless $dither;
 	$filtereddata = getuncompressed_data($blobin);
-	%ihdr = %{getihdr($blobin)};
-	my $unfiltereddata = unfilter($filtereddata, \%ihdr);
-	($colours, $colourlist) = countcolours($unfiltereddata, \%ihdr);
+	$ihdr = getihdr($blobin);
+	my $unfiltereddata = unfilter($filtereddata, $ihdr);
+	($colours, $colourlist) = countcolours($unfiltereddata, $ihdr);
 	if ($colours < 1) {return $blobin;}
 	if (($colours < 256)&&(($colours < $colour_limit)||($colour_limit == 0))) {return indexcolours($blobin);}
 	if ($colour_limit > 256) {return undef;}
@@ -1231,10 +1220,10 @@ sub palettize {
 	#now the IHDR
 	$blobout = $blobout.pack("N", 0x0D);
 	$ihdr_chunk = "IHDR";
-	$ihdr_chunk = $ihdr_chunk.pack("N2", ($ihdr{"imagewidth"}, $ihdr{"imageheight"}));
+	$ihdr_chunk = $ihdr_chunk.pack("N2", ($ihdr->{"imagewidth"}, $ihdr->{"imageheight"}));
 	#FIX ME: Support index of less than 8 bits
 	$ihdr_chunk = $ihdr_chunk.pack("C2", (8, 3)); #8 bit indexed colour
-	$ihdr_chunk = $ihdr_chunk.pack("C3", ($ihdr{"compression"}, $ihdr{"filter"}, $ihdr{"interlace"}));
+	$ihdr_chunk = $ihdr_chunk.pack("C3", ($ihdr->{"compression"}, $ihdr->{"filter"}, $ihdr->{"interlace"}));
 	my $ihdrcrc = crc32($ihdr_chunk);
 	$blobout = $blobout.$ihdr_chunk.pack("N", $ihdrcrc);
 	#now any chunk before the IDAT
@@ -1261,9 +1250,9 @@ sub palettize {
 				#now process the IDAT
 				my $dataout;
 				my $linesdone = 0;
-				my $totallines = $ihdr{"imageheight"};
-				my $width = $ihdr{"imagewidth"};
-				my $cdepth = comp_width(\%ihdr);
+				my $totallines = $ihdr->{"imageheight"};
+				my $width = $ihdr->{"imagewidth"};
+				my $cdepth = comp_width($ihdr);
 				my $linelength = $width * $cdepth + 1;
 				my %colourlookup = %{$pallookref};
 				my ($colour, $palnumber);
@@ -1435,7 +1424,7 @@ Image::Pngslimmer::palettize($blob[, $colourlimit[, $dither]]) will replace a 24
 (256 or less colours) image. If the original image has less than $colourlimit colours it will do this by calling 
 indexcolours and so losslessly process the image. More generally it will process the image using the lossy median 
 cut algorithm. Currently this only works for 24 bit images. Again this process is slow - the author can
-process images at about 30KB per second - meaning it can be used for J2ME in "real time" but is
+process images at about 30 - 50KB per second - meaning it can be used for J2ME in "real time" but is
 likely to be too slow for many other dynamic uses. Setting $colourlimit between 1 and 255 allows control over
 the size of the generated palette (the default is 0 which generates a 256 colour palette). Setting $dither to
 1 will turn on the EXTREMELY SLOW (a 150k image takes over three hours on the author's machine) dithering. It is
