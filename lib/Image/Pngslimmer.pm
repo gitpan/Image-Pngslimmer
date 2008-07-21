@@ -26,8 +26,7 @@ our @EXPORT = qw(
 	
 );
 
-our $VERSION = '0.22';
-
+our $VERSION = '0.23';
 
 sub checkcrc {
 	my $chunk = shift;
@@ -41,7 +40,6 @@ sub checkcrc {
 	#don't match
 	return 0;
 }
-	
 
 sub ispng {
 	my $blob = shift;
@@ -107,8 +105,7 @@ sub shrinkchunk {
 	unless ($status == Z_OK){ return $blobin;}
 	return $blobout;
 }
-	
-	
+
 sub getuncompressed_data {
 	my ($output, $puredata, @idats, $x, $status, $outputlump, $calc_crc, $uncompcrc);
 	my $blobin = shift;
@@ -225,7 +222,6 @@ sub zlibshrink {
 	return $blobout;
 }
 
-
 sub linebyline {
 	#analyze the data line by line
 	my ($data, $ihdr)= @_;
@@ -312,7 +308,6 @@ sub filter_sub {
 	}
 	return $filtereddata;
 }
-
 
 sub filter_up {
 	#filter data schunk using Up type
@@ -501,7 +496,6 @@ sub filterdata {
 		$rows_done++;
 	}
 	return $finalfiltered;
-	
 }
 
 sub getihdr {
@@ -719,7 +713,6 @@ sub unfilterpaeth {
 	return $lineout;
 }
 
-
 sub unfilter {
 	my  ($blobin, $chunkin, $chunkout, $ihdr, %ihdr, $imageheight, $imagewidth);
 	$chunkin = shift;
@@ -916,7 +909,6 @@ sub indexcolours {
 	
 }
 
-	
 sub convert_toxyz {
 	#convert 24 bit number to cartesian point
 	my $inpoint = shift;
@@ -947,7 +939,6 @@ sub getcolour_ave {
 	$blue = ($blue/$numb);
 	return ($red, $green, $blue);
 }
-
 
 sub getaxis_details {
 	#return a reference to the longestaxis and its length
@@ -990,32 +981,27 @@ sub getbiggestbox {
 
 sub sortonaxes {
 	my ($boundingref, $coloursref, $longestaxis, $lengthofaxis) = @_;
-	my (@colours, $x, %distances, $distance, @outputlist, @newcolours);
+	my (@colours, $x, %distances, $colshift, @outputlist, @newcolours);
 	@newcolours = @$coloursref;
+	#FIXME: This only works for 24 bit colour
 	if ($longestaxis == 2)
 	{
 		#can just sort on the whole number if red
 		@newcolours = sort {$a <=> $b} @newcolours;
 		return \@newcolours;
 	}
-	my $axisfactor = 8 * $longestaxis;
+	$colshift = 0xFFFFFF >> (16 - ($longestaxis * 8));
 	foreach $x (@newcolours)
 	{
-		#FIX ME: Only works for 24 bit images
-		$distance = ($x>>$axisfactor)&0xFF;
-		$distances{$x} = $distance;
+		$distances{$x} = $x & $colshift;
 	}
-	foreach $x (sort {$distances{$a} <=> $distances{$b}} keys %distances)
-	{
-		push @outputlist, $x;
-	}
+	@outputlist = sort {$distances{$a} <=> $distances{$b}} keys %distances;
 	return \@outputlist;
 }
 
-
 sub getRGBbox {
 	my $points = shift;
-	my ( @reds, @greens, @blues, $numb, $x);
+	my (@reds, @greens, @blues, $numb, $x);
 	$numb = @$points;
 	for ($x = 0; $x < $numb; $x += 3)
 	{
@@ -1028,7 +1014,6 @@ sub getRGBbox {
 	@blues = sort {$a <=> $b} @blues;
 	my $boundref = [shift @reds, shift @greens, shift @blues, pop @reds, pop @greens, pop @blues];
 	return $boundref;
-	
 }
 
 sub generate_box {
@@ -1043,7 +1028,6 @@ sub generate_box {
 	my $boundref = getRGBbox(\@colourpoints);
 	return $boundref;
 }	
-
 
 sub getpalette {
 	my ($x, @onebox,  @colours, @palette, %lookup, $lookup, $boxes, $z, $colours);
@@ -1127,7 +1111,6 @@ sub index_mediancut {
 	} until ($colourspaces == $colcount);
 	return getpalette(@boxes);
 }
-		
 
 sub dither {
 	#implement Floyd - Steinberg error diffusion dither
@@ -1189,8 +1172,6 @@ sub dither {
 
 	return ($palnumber, $unfiltereddata);
 }
-
-	
 
 sub palettize {
 	# take PNG and count colours
@@ -1304,8 +1285,7 @@ sub palettize {
 	}
 	return $blobout;
 }
-	
-	
+
 sub analyze {
 	my ($blob, $chunk_desc, $chunk_text, $chunk_length, $chunk_CRC, $crit_status, $pub_status, @chunk_array, $searchindex, $pnglength, $nextindex);
 	my ($chunk_CRC_checked);
@@ -1351,7 +1331,6 @@ sub analyze {
 	return @chunk_array;
 }
 
-
 1;
 __END__
 
@@ -1381,7 +1360,7 @@ Image::Pngslimmer aims to cut down the size of PNGs. Users pass a PNG to various
 and a slimmer version is returned. Image::Pngslimmer was designed for use where PNGs are being
 generated on the fly and where size matters more than speed- eg for J2ME use or any similiar 
 low speed or high latency environment. There are other options - probably better ones - for 
-handling static PNGs, though you may still fid the fuctions useful.
+handling static PNGs, though you may still find the fuctions useful.
 
 Filtering and recompressing an image is not fast - for example on a 4300 BogoMIPS box with 1G
 of memory the author processes PNGs at about 30KB per second.
@@ -1437,7 +1416,7 @@ of the colours in the image.
 
 This is free software and is licenced under the same terms as Perl itself ie Artistic and GPL
 
-It is copyright (c) Adrian McMenamin, 2006, 2007
+It is copyright (c) Adrian McMenamin, 2006, 2007, 2008
 
 =head1 REQUIREMENTS
 
