@@ -1,7 +1,10 @@
 Revision history for Perl extension Image::Pngslimmer.
 (Times are UTC)
 
-0.23  Mon Jul 21 20:42:00 2008
+0.24  Mon Jul 21 20:40:00 2008
+	- further clean up
+
+0.23  Mon Jul 21 19:42:00 2008
 	- cleaned up code
 
 0.22  Tue Apr 03 22:57:00 2007
