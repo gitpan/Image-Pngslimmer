@@ -26,7 +26,7 @@ our @EXPORT = qw(
 	
 );
 
-our $VERSION = '0.24';
+our $VERSION = '0.25';
 
 sub checkcrc {
 	my $chunk = shift;
@@ -839,14 +839,14 @@ sub indexcolours {
 		my $ihdrcrc = crc32($ihdr_chunk);
 		$blobout = $blobout.$ihdr_chunk.pack("N", $ihdrcrc);
 		#now any chunk before the IDAT
-        	my $searchindex =  16 + 13 + 4 + 4;
+		my $searchindex =  16 + 13 + 4 + 4;
 		my $pnglength = length($blobin);
 		my $foundidat = 0;
-        	while ($searchindex < ($pnglength - 4)) {
-	        #Copy the chunk
-	                my $chunklength = unpack("N", substr($blobin, $searchindex - 4, 4));
-        	        my $chunktocopy = substr($blobin, $searchindex - 4, $chunklength + 12);
-                	if (substr($blobin, $searchindex, 4) eq "IDAT") {
+		while ($searchindex < ($pnglength - 4)) {
+	       	#Copy the chunk
+			my $chunklength = unpack("N", substr($blobin, $searchindex - 4, 4));
+			my $chunktocopy = substr($blobin, $searchindex - 4, $chunklength + 12);
+			if (substr($blobin, $searchindex, 4) eq "IDAT") {
 				if ($foundidat == 0) { #ignore any additional IDAT chunks
 					#now the palette chunk
 					$pal_chunk = "";
@@ -999,33 +999,24 @@ sub sortonaxes {
 	return \@outputlist;
 }
 
-sub getRGBbox {
-	my $points = shift;
-	my (@reds, @greens, @blues, $numb, $x);
-	$numb = @$points;
-	for ($x = 0; $x < $numb; $x += 3)
+sub generate_box {
+	#convert colours to cartesian points
+	#and then return the bounding box
+	my ($x, @reds, @greens, @blues, $rd, $gn, $bl);
+	if (scalar(@_) == 1) {
+		return [convert_toxyz(pop @_)];
+	}
+	foreach $x (@_)
 	{
-		push @reds, $points->[$x];
-		push @greens, $points->[$x + 1];
-		push @blues, $points->[$x + 2];
+		($rd, $gn, $bl) = convert_toxyz($x);
+		push @reds, $rd;
+		push @greens, $gn;
+		push @blues, $bl;
 	}
 	@reds = sort {$a <=> $b} @reds;
 	@greens = sort {$a <=> $b} @greens;
 	@blues = sort {$a <=> $b} @blues;
 	my $boundref = [shift @reds, shift @greens, shift @blues, pop @reds, pop @greens, pop @blues];
-	return $boundref;
-}
-
-sub generate_box {
-	#convert colours to cartesian points
-	#and then return the bounding box
-	my (@colourpoints, $x);
-	foreach $x (@_)
-	{
-		push @colourpoints, convert_toxyz($x);
-	}
-	if (scalar(@colourpoints) == 3) { return \@colourpoints;}
-	my $boundref = getRGBbox(\@colourpoints);
 	return $boundref;
 }	
 
@@ -1333,7 +1324,6 @@ sub analyze {
 
 1;
 __END__
-
 
 =pod
 

@@ -1,4 +1,4 @@
-Image::Pngslimmer version 0.22
+Image::Pngslimmer version 0.25
 =============================
 
 OVERVIEW
@@ -67,7 +67,7 @@ Compress::Raw::Zlib
 COPYRIGHT AND LICENCE
 
 
-Copyright (C) 2006, 2007 by Adrian McMenamin <adrian AT newgolddream DOT info>
+Copyright (C) 2006, 2007 by Adrian McMenamin <adrian AT mcmen DOT demon DOT co DOT uk>
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.8.4 or,

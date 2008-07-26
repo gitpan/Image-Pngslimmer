@@ -1,10 +1,10 @@
 --- #YAML:1.0
 name:                Image-Pngslimmer
-version:             0.24
+version:             0.25
 abstract:            slims (dynamically created) PNGs
 license:             ~
 author:              
-    - Adrian McMenamin <adrian@newgolddream.info>
+    - Adrian McMenamin <adrian@mcmen.demon.co.uk>
 generated_by:        ExtUtils::MakeMaker version 6.44
 distribution_type:   module
 requires:     
