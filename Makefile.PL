@@ -8,5 +8,6 @@ WriteMakefile(
     PREREQ_PM         => {POSIX => 1.08, Compress::Zlib => 2.003, Compress::Raw::Zlib => 2.003}, # e.g., Module::Name => 1.1
     ($] >= 5.005 ?     ## Add these new keywords supported since 5.005
       (ABSTRACT_FROM  => 'lib/Image/Pngslimmer.pm', # retrieve abstract from module
-       AUTHOR         => 'Adrian McMenamin <adrian@mcmen.demon.co.uk>') : ()),
+       AUTHOR         => 'Adrian McMenamin <adrian@mcmen.demon.co.uk>',
+       LICENSE	      => 'Perl') : ()),
 );

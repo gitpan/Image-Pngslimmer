@@ -1,4 +1,4 @@
-Image::Pngslimmer version 0.25
+Image::Pngslimmer version 0.26
 =============================
 
 OVERVIEW
@@ -42,6 +42,8 @@ The size of the palette can be set by the optional $colours in the range 1 - 256
 gives 256 colours). If the optional $dither is set to 1, then the output image will be dithered
 but please note the current dithering algorithm is EXTREMELY SLOW and should be avoided.
 
+NB: Alpha channels in the original image will be lost with with quantization or indexation.
+
 
 Image::Pngslimmer::reportcolours($blob) will print details of the colour frequencies in the
 passed in PNG.
@@ -67,7 +69,7 @@ Compress::Raw::Zlib
 COPYRIGHT AND LICENCE
 
 
-Copyright (C) 2006, 2007 by Adrian McMenamin <adrian AT mcmen DOT demon DOT co DOT uk>
+Copyright (C) 2006, 2007i, 2008 by Adrian McMenamin <adrian AT mcmen DOT demon DOT co DOT uk>
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.8.4 or,
