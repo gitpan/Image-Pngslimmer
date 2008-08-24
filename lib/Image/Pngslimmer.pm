@@ -26,7 +26,7 @@ our @EXPORT = qw(
 	
 );
 
-our $VERSION = '0.27';
+our $VERSION = '0.28';
 
 sub checkcrc {
 	my $chunk = shift;
@@ -98,10 +98,8 @@ sub ispng {
 }
 
 sub shrinkchunk {
-	my ($blobin, $bitblob, $blobout, $strategy, $status, $y, $level);
-	$blobin = shift;
-	$strategy = shift;
-	$level = shift;
+	my ($bitblob, $blobout, $status, $y);
+	my ($blobin, $strategy, $level) = @_;
 	unless (defined($level)){
 		$level = Z_BEST_COMPRESSION;
 	}
@@ -134,10 +132,10 @@ sub shrinkchunk {
 
 sub getuncompressed_data {
 	my ($output, $puredata, @idats, $x, $status, $outputlump);
-	my ($calc_crc, $uncompcrc, $blobin, $pnglength, $searchindex);
+	my ($calc_crc, $uncompcrc, $searchindex);
 	my ($chunklength, $numberofidats, $chunknumber, $outlength);
-	$blobin = shift;
-	$pnglength = length($blobin);
+	my $blobin = shift;
+	my $pnglength = length($blobin);
 	$searchindex = 8 + 25; #start looking at the end of the IHDR
 	while ($searchindex < ($pnglength - 8))
 	{
@@ -207,39 +205,34 @@ sub getuncompressed_data {
 
 sub crushdatachunk {
 	#look to inner stream, uncompress that, then recompress
-	my ($chunkin, $datalength, $puredata, $chunkout, $crusheddata, $y);
-	my ($purecrc, $blobin, $output, $lenuncomp, $rawlength, $lencompo);
-	my ($newlength, $rfc1950stuff, $outcrc);
-	$chunkin = shift;
-	$blobin = shift;
-	$output = getuncompressed_data($blobin);
-	$lenuncomp = length($output);
+	my ($chunkin, $blobin) = @_;
+	my $output = getuncompressed_data($blobin);
 	unless (defined($output)){
 		return $chunkin;
 	}
-	$rawlength = length($output);
-	$purecrc = adler32($output);
+	my $rawlength = length($output);
+	my $purecrc = adler32($output);
 	# now crush it at the maximum level
-	$crusheddata = shrinkchunk($output, Z_FILTERED, Z_BEST_COMPRESSION);
-	$lencompo = length($crusheddata);
+	my $crusheddata = shrinkchunk($output, Z_FILTERED, Z_BEST_COMPRESSION);
+	my $lencompo = length($crusheddata);
 	unless (length($crusheddata) < $rawlength) {
 		$crusheddata = shrinkchunk($output, Z_DEFAULT_STRATEGY,
 			Z_BEST_COMPRESSION);
 	}
-	$newlength = length($crusheddata) + 6;
+	my $newlength = length($crusheddata) + 6;
 	#now we have compressed the data, write the chunk
-	$chunkout = pack("N", $newlength);
-	$rfc1950stuff = pack("C2", (0x78,0xDA)); 
-	$output = "IDAT".$rfc1950stuff.$crusheddata.pack("N", $purecrc);
-	$outcrc = crc32($output);
-	$chunkout = $chunkout.$output.pack("N", $outcrc);
+	my $chunkout = pack("N", $newlength);
+	my $rfc1950stuff = pack("C2", (0x78,0xDA)); 
+	my $output2 = "IDAT".$rfc1950stuff.$crusheddata.pack("N", $purecrc);
+	my $outcrc = crc32($output2);
+	$chunkout = $chunkout.$output2.pack("N", $outcrc);
 	return $chunkout;
 }
 
 sub zlibshrink {
-	my ($blobin, $blobout, $pnglength, $ihdr_len, $searchindex, $chunktocopy);
-	my ($chunklength, $processedchunk, $idatfound, $lenidat);
-	$blobin = shift;
+	my $chunktocopy;
+	my ($chunklength, $processedchunk, $lenidat);
+	my $blobin = shift;
 	#find the data chunks
 	#decompress and then recompress
 	#work out the CRC and write it out
@@ -247,12 +240,12 @@ sub zlibshrink {
 	if (ispng($blobin) < 1) {
 		return undef;
 	}
-	$pnglength = length($blobin);
-	$ihdr_len = unpack("N", substr($blobin, 8, 4));
-	$searchindex =  16 + $ihdr_len + 4 + 4;
+	my $pnglength = length($blobin);
+	my $ihdr_len = unpack("N", substr($blobin, 8, 4));
+	my $searchindex =  16 + $ihdr_len + 4 + 4;
 	#copy the start of the incoming blob
-	$blobout = substr($blobin, 0, 16 + $ihdr_len + 4);
-	$idatfound = 0;
+	my $blobout = substr($blobin, 0, 16 + $ihdr_len + 4);
+	my $idatfound = 0;
 	while ($searchindex < ($pnglength - 4)) {
 		#Copy the chunk
 		$chunklength =
@@ -307,12 +300,11 @@ sub linebyline {
 
 sub comp_width {
 	#FIXME: only works for colour depth > 8
-	my ($ihdr, $comp_width, $ctype, $bdepth, $alpha);
-	$ihdr = shift;
-	$comp_width = 3;
-	$alpha = 0;
-	$ctype = $ihdr->{"colourtype"};
-	$bdepth = $ihdr->{"bitdepth"};
+	my $ihdr = shift;
+	my $comp_width = 3;
+	my $alpha = 0;
+	my $ctype = $ihdr->{"colourtype"};
+	my $bdepth = $ihdr->{"bitdepth"};
 	if ($ctype == 2) { #truecolour with no alpha
 		if ($bdepth == 8) {
 			$comp_width = 3;
@@ -368,18 +360,16 @@ sub filter_sub {
 	#http://www.w3.org/TR/PNG/#9Filters
 	#Filt(x) = Orig(x) - Orig(a)
 	#x is byte to be filtered, a is byte to left
-	my ($origbyte, $leftbyte, $newbyte, $ihdr, $unfiltereddata, $alpha);
-	my ($filtereddata, $count, $count_width, $comp_width, $totalwidth);
-	my $lines;
-	$unfiltereddata = shift;
-	$ihdr = shift;
-	$count = 0;
-	$count_width = 0;
-	$newbyte = 0;
-	($comp_width, $alpha) = comp_width($ihdr);
-	$totalwidth = $ihdr->{"imagewidth"} * $comp_width;
-	$filtereddata = "";
-	$lines = $ihdr->{"imageheight"};
+	my ($origbyte, $leftbyte) ;
+	my $unfiltereddata = shift;
+	my $ihdr = shift;
+	my $count = 0;
+	my $count_width = 0;
+	my $newbyte = 0;
+	my ($comp_width, $alpha) = comp_width($ihdr);
+	my $totalwidth = $ihdr->{"imagewidth"} * $comp_width;
+	my $filtereddata = "";
+	my $lines = $ihdr->{"imageheight"};
 	while ($count < $lines) {
 		#start - add filtertype byte
 		$filtereddata = $filtereddata."\1";
@@ -409,18 +399,16 @@ sub filter_sub {
 
 sub filter_up {
 	#filter data schunk using Up type
-	my ($origbyte, $upbyte, $newbyte, $ihdr, $unfiltereddata, $alpha);
-	my ($filtereddata, $comp_width, $count, $count_width, $totalwidth);
-	my $lines;
-	$unfiltereddata = shift;
-	$ihdr = shift;
-	($comp_width, $alpha) = comp_width($ihdr);
-	$count = 0;
-	$count_width = 0;
-	$newbyte = 0;
-	$totalwidth = $ihdr->{"imagewidth"} * $comp_width;
-	$filtereddata = "";
-	$lines = $ihdr->{"imageheight"};
+	my ($origbyte, $upbyte);
+	my $unfiltereddata = shift;
+	my $ihdr = shift;
+	my ($comp_width, $alpha) = comp_width($ihdr);
+	my $count = 0;
+	my $count_width = 0;
+	my $newbyte = 0;
+	my $totalwidth = $ihdr->{"imagewidth"} * $comp_width;
+	my $filtereddata = "";
+	my $lines = $ihdr->{"imageheight"};
 	while ($count < $lines) {
 		#start - add filtertype byte
 		$filtereddata = $filtereddata."\2";
@@ -450,18 +438,17 @@ sub filter_up {
 
 sub filter_ave {
 	#filter data schunk using Ave type
-	my ($origbyte, $avebyte, $newbyte, $ihdr, $unfiltereddata, $alpha);
-	my ($filtereddata, $top_predictor, $left_predictor, $comp_width);
-	my ($count, $count_width, $totalwidth, $lines);
-	$unfiltereddata = shift;
-	$ihdr = shift;
-	($comp_width , $alpha)= comp_width($ihdr);
-	$count = 0;
-	$count_width = 0;
-	$newbyte = 0;
-	$totalwidth = $ihdr->{"imagewidth"} * $comp_width;
-	$filtereddata = "";
-	$lines = $ihdr->{"imageheight"};
+	my ($origbyte, $avebyte); 
+	my ($top_predictor, $left_predictor);
+	my $unfiltereddata = shift;
+	my $ihdr = shift;
+	my ($comp_width , $alpha)= comp_width($ihdr);
+	my $count = 0;
+	my $count_width = 0;
+	my $newbyte = 0;
+	my $totalwidth = $ihdr->{"imagewidth"} * $comp_width;
+	my $filtereddata = "";
+	my $lines = $ihdr->{"imageheight"};
 	while ($count < $lines) {
 		#start - add filtertype byte
 		$filtereddata = $filtereddata."\3";
@@ -500,18 +487,16 @@ sub filter_ave {
 			
 sub filter_paeth {	#paeth predictor type filtering
 	my ($origbyte, $paethbyte_a, $paethbyte_b, $paethbyte_c, $paeth_p);
-	my ($paeth_pa, $paeth_pb, $paeth_pc, $paeth_predictor, $alpha);
-	my ($unfiltereddata, $filtereddata, $newbyte, $ihdr, $comp_width);
-	my ($count, $count_width, $totalwidth, $lines);
-	$unfiltereddata = shift;
-	$ihdr = shift;
-	($comp_width, $alpha) = comp_width($ihdr);
-	$count = 0;
-	$count_width = 0;
-	$newbyte = 0;
-	$totalwidth = $ihdr->{"imagewidth"} * $comp_width;
-	$filtereddata = "";
-	$lines = $ihdr->{"imageheight"};
+	my ($paeth_pa, $paeth_pb, $paeth_pc, $paeth_predictor);
+	my $unfiltereddata = shift;
+	my $ihdr = shift;
+	my ($comp_width, $alpha) = comp_width($ihdr);
+	my $count = 0;
+	my $count_width = 0;
+	my $newbyte = 0;
+	my $totalwidth = $ihdr->{"imagewidth"} * $comp_width;
+	my $filtereddata = "";
+	my $lines = $ihdr->{"imageheight"};
 	while ($count < $lines) {
 		#start - add filtertype byte
 		$filtereddata = $filtereddata."\4";
@@ -570,28 +555,25 @@ sub filter_paeth {	#paeth predictor type filtering
 }
 
 sub filterdata {
-	my ($unfiltereddata, $ihdr, $filtereddata, $finalfiltered, $alpha);
-	my ($filtered_sub, $filtered_up, $filtered_ave, $filtered_paeth);
-	my ($pixels, $rows, $comp_width, $bytesperline, $countout, $rows_done);
-	my ($count_sub, $count_up, $count_ave, $count_zero, $count_paeth);
-	$unfiltereddata = shift;
-	$ihdr = shift;
-	$filtered_sub = filter_sub($unfiltereddata, $ihdr);
-	$filtered_up = filter_up($unfiltereddata, $ihdr);
-	$filtered_ave = filter_ave($unfiltereddata, $ihdr);
-	$filtered_paeth = filter_paeth($unfiltereddata, $ihdr);
+	my ($filtereddata, $finalfiltered);
+	my $unfiltereddata = shift;
+	my $ihdr = shift;
+	my $filtered_sub = filter_sub($unfiltereddata, $ihdr);
+	my $filtered_up = filter_up($unfiltereddata, $ihdr);
+	my $filtered_ave = filter_ave($unfiltereddata, $ihdr);
+	my $filtered_paeth = filter_paeth($unfiltereddata, $ihdr);
 	
-	$pixels = $ihdr->{"imagewidth"};
-	$rows = $ihdr->{"imageheight"};
-	($comp_width, $alpha) = comp_width($ihdr);
-	$bytesperline = $pixels * $comp_width;
-	$countout = 0;
-	$rows_done = 0;
-	$count_sub = 0;
-	$count_up = 0;
-	$count_ave = 0;
-	$count_zero = 0;
-	$count_paeth = 0;
+	my $pixels = $ihdr->{"imagewidth"};
+	my $rows = $ihdr->{"imageheight"};
+	my ($comp_width, $alpha) = comp_width($ihdr);
+	my $bytesperline = $pixels * $comp_width;
+	my $countout = 0;
+	my $rows_done = 0;
+	my $count_sub = 0;
+	my $count_up = 0;
+	my $count_ave = 0;
+	my $count_zero = 0;
+	my $count_paeth = 0;
 	while ($rows_done < $rows)
 	{
 		while (($countout) < $bytesperline)
@@ -670,8 +652,8 @@ sub filterdata {
 }
 
 sub getihdr {
-	my ($blobin, %ihdr);
-	$blobin = shift;
+	my %ihdr;
+	my $blobin = shift;
 	$ihdr{"imagewidth"} = unpack("N", substr($blobin, 16, 4));
 	$ihdr{"imageheight"} = unpack("N", substr($blobin, 20, 4));
 	$ihdr{"bitdepth"} = unpack("C", substr($blobin, 24, 1));
@@ -683,18 +665,15 @@ sub getihdr {
 }
 	
 sub filter {
- 	my ($blobin, $filtereddata, $ihdr, $datachunk, $canfilter);
-	my ($preproclen, $postproclen, $filteredcrc, $filterlen);
-	my ($pnglength, $ihdr_len, $searchindex, $blobout, $foundidat);
 	my ($chunklength, $chunktocopy, $rfc1950stuff, $output, $newlength);
-	my ($outcrc, $processedchunk);
-	$blobin = shift;
+	my ($outcrc, $processedchunk, $filtereddata);
+	my $blobin = shift;
 	#basic check so we do not waste our time
 	if (ispng($blobin) < 1) {
 		return undef;
 	}
 	#read some basic info about the PNG
-	$ihdr = getihdr($blobin);
+	my $ihdr = getihdr($blobin);
 	if ($ihdr->{"colourtype"} == 3) {
 		#already palettized
 		return $blobin;
@@ -715,11 +694,11 @@ sub filter {
 		#FIXME: support interlacing
 		return $blobin;
 	}
-	$datachunk = getuncompressed_data($blobin);
+	my $datachunk = getuncompressed_data($blobin);
 	unless (defined($datachunk)) {
 		return $blobin;
 	}
-	$canfilter = linebyline($datachunk, $ihdr);
+	my $canfilter = linebyline($datachunk, $ihdr);
 	if ($canfilter > 0) {
 		$filtereddata = filterdata($datachunk, $ihdr);
 	}
@@ -728,16 +707,16 @@ sub filter {
 	}
         #Now stick the uncompressed data into a chunk
 	#and return - leaving the compression to a different process
-        $filteredcrc = adler32($filtereddata);
+        my $filteredcrc = adler32($filtereddata);
 	$filtereddata = shrinkchunk($filtereddata, Z_FILTERED, Z_BEST_SPEED);
-	$filterlen = length($filtereddata);
+	my $filterlen = length($filtereddata);
 	#now push the data into the PNG
-        $pnglength = length($blobin);
-        $ihdr_len = unpack("N", substr($blobin, 8, 4));
-        $searchindex =  16 + $ihdr_len + 4 + 4;
+        my $pnglength = length($blobin);
+        my $ihdr_len = unpack("N", substr($blobin, 8, 4));
+        my $searchindex =  16 + $ihdr_len + 4 + 4;
         #copy the start of the incoming blob
-        $blobout = substr($blobin, 0, 16 + $ihdr_len + 4);
-	$foundidat = 0;
+        my $blobout = substr($blobin, 0, 16 + $ihdr_len + 4);
+	my $foundidat = 0;
         while ($searchindex < ($pnglength - 4)) {
 	        #Copy the chunk
                 $chunklength = unpack("N", substr($blobin,
@@ -770,23 +749,23 @@ sub filter {
 }
 
 sub discard_noncritical {
-	my ($blob, $cleanblob, $searchindex, $pnglength, $chunktext);
-	my ($nextindex, $ihdr_len);
-	$blob = shift;
+	my $chunktext;
+	my $nextindex;
+	my $blob = shift;
 	if (ispng($blob) < 1) {
 		#not a PNG
 		return $blob;
 	}
 	#we know we have a png = so go straight to the IHDR chunk
 	#copy signature and text + length from IHDR
-	$cleanblob = substr($blob, 0, 16);
+	my $cleanblob = substr($blob, 0, 16);
 	#get length of IHDR
-	$ihdr_len = unpack("N", substr($blob, 8, 4));
+	my $ihdr_len = unpack("N", substr($blob, 8, 4));
 	#copy IHDR data + CRC
 	$cleanblob = $cleanblob.substr($blob, 16, $ihdr_len + 4);
 	#move on to next text field
-	$searchindex = 16 + $ihdr_len + 8;
-	$pnglength = length($blob);
+	my $searchindex = 16 + $ihdr_len + 8;
+	my $pnglength = length($blob);
 	while ($searchindex < ($pnglength - 4)) {
 		#how big is chunk?
 		$nextindex = unpack("N", substr($blob, $searchindex - 4, 4));
@@ -807,18 +786,17 @@ sub discard_noncritical {
 }
 
 sub ispalettized {
-	my ($blobin, $ihdr);
-	$blobin = shift;
-	$ihdr = getihdr($blobin);
+	my $blobin = shift;
+	my $ihdr = getihdr($blobin);
 	return 0 unless $ihdr->{"colourtype"} == 3;
 	return 1;
 }
 
 sub unfiltersub {
-	my ($chunkin, $lines_done, $linelength, $lineout, $comp_width);
-	my ($addition, $pointis, $reconbyte);
-	($chunkin, $lines_done, $linelength, $comp_width) = @_;
-	$pointis = 1;
+	my $lineout;
+	my ($addition, $reconbyte);
+	my ($chunkin, $lines_done, $linelength, $comp_width) = @_;
+	my $pointis = 1;
 	while ($pointis < $linelength)
 	{
 		$reconbyte =
@@ -841,10 +819,10 @@ sub unfiltersub {
 }
 
 sub unfilterup {
-	my ($chunkin, $chunkout, $lines_done, $linelength, $lineout);
-	my ($addition, $pointis, $reconbyte);
-	($chunkin, $chunkout, $lines_done, $linelength) = @_;
-	$pointis = 1;
+	my $lineout;
+	my ($addition, $reconbyte);
+	my ($chunkin, $chunkout, $lines_done, $linelength) = @_;
+	my $pointis = 1;
 	while ($pointis < $linelength)
 	{
 		$reconbyte = unpack("C", substr($chunkin,
@@ -867,11 +845,11 @@ sub unfilterup {
 }
 	
 sub unfilterave {
-	my ($chunkin, $chunkout, $lines_done, $linelength, $lineout);
-	my ($compwidth, $addition, $addition_up, $addition_left);
-	my ($pointis, $reconbyte);
-	($chunkin, $chunkout, $lines_done, $linelength, $compwidth) = @_;
-	$pointis = 1;
+	my $lineout;
+	my ($addition, $addition_up, $addition_left);
+	my $reconbyte;
+	my ($chunkin, $chunkout, $lines_done, $linelength, $compwidth) = @_;
+	my $pointis = 1;
 	while ($pointis < $linelength)
 	{
 		$reconbyte = unpack("C", substr($chunkin,
@@ -902,11 +880,11 @@ sub unfilterave {
 }
 
 sub unfilterpaeth {
-	my ($chunkin, $chunkout, $lines_done, $linelength, $lineout);
-	my ($compwidth, $addition, $addition_up, $addition_left);
+	my $lineout;
+	my ($addition, $addition_up, $addition_left);
 	my ($addition_uleft, $reconbyte, $paeth_p, $paeth_a, $paeth_b);
 	my ($paeth_c, $recbyte);
-	($chunkin, $chunkout, $lines_done, $linelength, $compwidth) = @_;
+	my ($chunkin, $chunkout, $lines_done, $linelength, $compwidth) = @_;
 	my $pointis = 1;
 	while ($pointis < $linelength)
 	{
@@ -961,18 +939,17 @@ sub unfilterpaeth {
 }
 
 sub unfilter {
-	my ($blobin, $chunkin, $chunkout, $ihdr, $imageheight, $alpha);
-	my ($imagewidth, $lines_done, $pixels_done, $comp_width, $linelength);
+	my $chunkout;
 	my $filtertype;
-	$chunkin = shift;
-	$ihdr = shift;
-	$imageheight = $ihdr->{"imageheight"};
-	$imagewidth = $ihdr->{"imagewidth"};
+	my $chunkin = shift;
+	my $ihdr = shift;
+	my $imageheight = $ihdr->{"imageheight"};
+	my $imagewidth = $ihdr->{"imagewidth"};
 	#get each line
-	$lines_done = 0;
-	$pixels_done = 0;
-	($comp_width, $alpha) = comp_width($ihdr);
-	$linelength = $comp_width * $imagewidth + 1;
+	my $lines_done = 0;
+	my $pixels_done = 0;
+	my ($comp_width, $alpha) = comp_width($ihdr);
+	my $linelength = $comp_width * $imagewidth + 1;
 	while ($lines_done < $imageheight)
 	{
 		$filtertype = unpack("C",
@@ -1006,11 +983,11 @@ sub unfilter {
 }
 
 sub countcolours {
-	my ($chunk, $limit, $ihdr, $totallines, $width);
+	my ($limit, $totallines, $width);
 	my ($cdepth, $x, $colourfound, $pixelpoint, $colour, $alpha, $ndepth);
 	my %colourlist;
 	my $bdepth;
-	($chunk, $ihdr) = @_;
+	my ($chunk, $ihdr) = @_;
 	$totallines = $ihdr->{"imageheight"};
 	$width = $ihdr->{"imagewidth"};
 	($cdepth, $alpha) = comp_width($ihdr);
@@ -1066,10 +1043,7 @@ sub countcolours {
 }
 		
 sub reportcolours {
-	my ($colour_limit, $blobin, $filtereddata, $ihdr, $blobout);
-	my ($ihdr_chunk, $pal_chunk, $x, $colourfound);
-	my ($colourlist, $colours, $unfiltereddata);
-	$blobin = shift;
+	my $blobin = shift;
 	#is it a PNG
 	unless(ispng($blobin) > 0)
 	{
@@ -1082,37 +1056,37 @@ sub reportcolours {
 		print "Supplied image is indexed.\n";
 		return -1;
 	}
-	$filtereddata = getuncompressed_data($blobin);
-	$ihdr = getihdr($blobin);
-	$unfiltereddata = unfilter($filtereddata, $ihdr);
-	($colours, $colourlist) = countcolours($unfiltereddata, $ihdr);
+	my $filtereddata = getuncompressed_data($blobin);
+	my $ihdr = getihdr($blobin);
+	my $unfiltereddata = unfilter($filtereddata, $ihdr);
+	my ($colours, $colourlist) = countcolours($unfiltereddata, $ihdr);
 	return $colourlist;
 }
 		
 sub indexcolours {
 	# take PNG and count colours
-	my ($colour_limit, $blobin, $filtereddata, $ihdr, $blobout);
+	my $blobout;
 	my ($ihdr_chunk, $pal_chunk, $x, $palindex, $colourfound);
-	my ($colourlist, $colours, $unfiltereddata, $ihdrcrc);
+	my $ihdrcrc;
 	my ($searchindex, $pnglength, $foundidat, $chunklength, $chunktocopy);
 	my ($palcount, $pal_crc, $len_pal, $dataout, $linesdone, $totallines);
 	my ($width, $cdepth, $linelength, $pixelpoint, $colour, $rfc1950stuff);
 	my ($rfc1951stuff, $output, $newlength, $outcrc, $processedchunk);
 	my ($alpha, $ndepth, $bdepth);
 
-	$blobin = shift;
+	my $blobin = shift;
 	#is it a PNG
 	return $blobin unless ispng($blobin) > 0;
 	#is it already palettized?
 	return $blobin unless ispalettized($blobin) < 1;
-	$colour_limit = shift; 
+	my $colour_limit = shift; 
 	#0 means no limit
 	$colour_limit = 0 unless $colour_limit;
-	$filtereddata = getuncompressed_data($blobin);
-	$ihdr = getihdr($blobin);
-	$unfiltereddata = unfilter($filtereddata, $ihdr);
-	($colours, $colourlist) = countcolours($unfiltereddata, $ihdr);
-	if ($colours < 1) {return $blobin;}
+	my $filtereddata = getuncompressed_data($blobin);
+	my $ihdr = getihdr($blobin);
+	my $unfiltereddata = unfilter($filtereddata, $ihdr);
+	my ($colours, $colourlist) = countcolours($unfiltereddata, $ihdr);
+	if ($colours < 1) {return $blobin}
 	#to write out an indexed version $colours has to be less than 256
 	if ($colours < 256) {
 		#have to rewrite the whole thing now
@@ -1291,8 +1265,8 @@ sub getcolour_ave {
 
 sub getaxis_details {
 	#return a reference to the longestaxis and its length
-	my ($boundingbox, $longestaxis, $length, $i, );
-	$boundingbox = shift;
+	my ($longestaxis, $length, $i, );
+	my $boundingbox = shift;
 	return (0,0) unless defined ($boundingbox->[5]);
 	$longestaxis = 0;
 	my @lengths = ($boundingbox->[3] - $boundingbox->[0],
@@ -1310,10 +1284,10 @@ sub getaxis_details {
 
 sub getbiggestbox {
 	#return the index to the biggest box
-	my ($boxesin, $x, $i, $n, %indices);
+	my ($x, $i, %indices);
 	my ($z, $counter, $biggest);
-	$boxesin = shift;
-	$n = shift; 
+	my $boxesin = shift;
+	my $n = shift; 
 	keys(%indices) = $n;
 	$z = 0;
 	$counter = 0;
@@ -1329,8 +1303,7 @@ sub getbiggestbox {
 }
 
 sub sortonaxes {
-	my ($boundingref, $coloursref, $longestaxis, $lengthofaxis) = @_;
-	my ($x, $colshift);
+	my ($coloursref, $longestaxis) = @_;
 	my @newcolours = @$coloursref;
 	#FIXME: This only works for 24 bit colour
 	if ($longestaxis == 2)
@@ -1339,8 +1312,8 @@ sub sortonaxes {
 		@newcolours = sort {$a <=> $b} @newcolours;
 		return \@newcolours;
 	}
-	$colshift = 0xFFFFFF >> (16 - ($longestaxis * 8));
-	my %distances;
+	my $colshift = 0xFFFFFF >> (16 - ($longestaxis * 8));
+	my ($x, %distances);
 	keys (%distances) = scalar(@newcolours);
 	foreach $x (@newcolours)
 	{
@@ -1375,7 +1348,7 @@ sub generate_box {
 
 sub getpalette {
 	my ($x, @palette, %lookup, $lookup, $boxes, $z);
-	my ($colnumbers, $colours, @newboxes);
+	my ($colnumbers, $colours);
 	my @boxes = @_;
 	#eachbox has four references
 	$colnumbers = scalar(@boxes)/4;
@@ -1385,35 +1358,8 @@ sub getpalette {
 		my @colours = @$colours;
 		push @palette, getcolour_ave(\@colours);
 		foreach $z (@colours) { $lookup{$z} = $x }
-		my @boundaries = @{$boxes[$x * 4]};
-		if (scalar(@boundaries) > 3) {
-			#eliminate boxes with only
-			#one point
-			push @newboxes, $boxes[$x * 4];
-			push @newboxes, $x;	
-		}
 	}
-	return (\@palette, \%lookup, \@newboxes);
-}
-
-sub match_dither {
-	my ($z, $max, $boundref);
-	my ($cinr, $cing, $cinb, $boxref) = @_;
-
-	my @boxes = @{$boxref};
-	$max = scalar(@boxes)/2;
-	for ($z = 0; $z < $max; $z++)
-	{
-		$boundref = $boxes[$z * 2];
-		my @boundaries = @$boundref;
-		if (($boundaries[0] <= $cinr) && ($boundaries[3] >= $cinr) &&
-			($boundaries[1] <= $cing) && ($boundaries[4] >= $cing)
-			&& ($boundaries[2] <= $cinb) &&
-			($boundaries[5] >= $cinb)) {
-			return $boxes[$z * 2 + 1];
-		}
-	}
-	return undef;
+	return (\@palette, \%lookup);
 }
 
 sub closestmatch_inRGB {
@@ -1443,11 +1389,11 @@ sub closestmatch_inRGB {
 }
 		
 sub index_mediancut {
-	my ($colour_numbers, $colourlist);
-	my (@boundingbox, $colourspaces, $colcount, @boxes);
+	my $colour_numbers;
+	my (@boundingbox, $colcount, @boxes);
 	my ($boxtocut, $median, $biggestbox);
 	my ($sortedcolours, $boxout, $refbigbox);
-	($colourlist, $colourspaces) = @_;
+	my ($colourlist, $colourspaces) = @_;
 	if (!defined($colourspaces)||($colourspaces == 0)) {$colourspaces = 256;}
 	$colcount = 0;
 	my %colourlist = %{$colourlist};
@@ -1467,7 +1413,7 @@ sub index_mediancut {
 			unless $colcount == 0;
 		my @biggestbox = splice(@boxes, $boxtocut * 4, 4);
 		#now sort on the axis
-		$sortedcolours = sortonaxes(@biggestbox);
+		$sortedcolours = sortonaxes($biggestbox[1], $biggestbox[2]);
 		my @sortedcolours = @$sortedcolours;
 		$median = POSIX::floor(scalar(@sortedcolours)/2);
 		#cut the colours in half
@@ -1494,16 +1440,13 @@ sub dither {
 
 	my ($colour, $unfiltereddata, $cdepth, $ndepth, $linesdone,
 		$pixelpoint, $totallines, $pallookref, $paloutref,
-		$pal_chunk, $width, $boxref) = @_;
+		$pal_chunk, $width) = @_;
 	$linelength = $width * $cdepth + 1;
 	#FIXME not just 24 bit depth
 	($rcomp, $gcomp, $bcomp) = convert_toxyz($colour);
 	$palnumber = $pallookref->{$colour};
 	if (!$palnumber) {
-		$palnumber = match_dither($rcomp, $gcomp, $bcomp, $boxref);
-		unless ($palnumber) {
-			$palnumber = closestmatch_inRGB($paloutref, $rcomp, $gcomp, $bcomp);
-		}
+		$palnumber = closestmatch_inRGB($paloutref, $rcomp, $gcomp, $bcomp);
 	}
 
 	($rp, $rg, $rb) = unpack("C3", substr($pal_chunk, $palnumber * 3, 3));
@@ -1596,31 +1539,29 @@ sub dither {
 
 sub palettize {
 	# take PNG and count colours
-	my ($colour_limit, $blobin, $filtereddata, $ihdr, $blobout);
-	my ($ihdr_chunk, $pal_chunk, $x, $colourfound);
-	my ($colourlist, $colours, $paloutref, $pallookref);
-	my ($palnumb, $dither, $unfiltereddata, $ihdrcrc, $searchindex);
-	my ($pnglength, $foundidat, $chunklength, $chunktocopy);
+	my ($pal_chunk, $x, $colourfound);
+	my $palnumb;
+	my ($chunklength, $chunktocopy);
 	my ($palcount, $pal_crc, $len_pal, $dataout, $linesdone, $totallines);
-	my ($width, $cdepth, $linelength, $colour, $palnumber);
+	my ($width, $linelength, $colour, $palnumber);
 	my ($pixelpoint, $linemarker, $rfc1950stuff, $rfc1951stuff, $output);
-	my ($newlength, $outcrc, $processedchunk, $boxref, $alpha, $ndepth);
-	my ($nwidth, $bdepth);
+	my ($newlength, $outcrc, $processedchunk);
+	my $bdepth;
 
-	$blobin = shift;
+	my $blobin = shift;
 	#is it a PNG
 	return $blobin unless ispng($blobin) > 0;
 	#is it already palettized?
 	return $blobin unless ispalettized($blobin) < 1;
-	$colour_limit = shift; 
+	my $colour_limit = shift; 
 	#0 means no limit
 	$colour_limit = 0 unless $colour_limit;
-	$dither = shift;
+	my $dither = shift;
 	$dither = 0 unless $dither;
-	$filtereddata = getuncompressed_data($blobin);
-	$ihdr = getihdr($blobin);
-	$unfiltereddata = unfilter($filtereddata, $ihdr);
-	($colours, $colourlist) = countcolours($unfiltereddata, $ihdr);
+	my $filtereddata = getuncompressed_data($blobin);
+	my $ihdr = getihdr($blobin);
+	my $unfiltereddata = unfilter($filtereddata, $ihdr);
+	my ($colours, $colourlist) = countcolours($unfiltereddata, $ihdr);
 	if ($colours < 1) {
 		return $blobin;
 	}
@@ -1631,14 +1572,14 @@ sub palettize {
 	if ($colour_limit > 256) {
 		return undef;
 	}
-	($paloutref, $pallookref, $boxref) =
+	my ($paloutref, $pallookref) =
 		index_mediancut($colourlist, $colour_limit);
 	#have to rewrite the whole thing now
 	#start with the PNG header
-	$blobout = pack("C8", (137, 80, 78, 71, 13, 10, 26, 10));
+	my $blobout = pack("C8", (137, 80, 78, 71, 13, 10, 26, 10));
 
-	($cdepth, $alpha) = comp_width($ihdr);
-	$ndepth = $cdepth;
+	my ($cdepth, $alpha) = comp_width($ihdr);
+	my $ndepth = $cdepth;
 	if ($alpha) {
 		#truecolour first
 		if ($cdepth == 4) {
@@ -1661,19 +1602,19 @@ sub palettize {
 
 	#now the IHDR
 	$blobout = $blobout.pack("N", 0x0D);
-	$ihdr_chunk = "IHDR";		
+	my $ihdr_chunk = "IHDR";		
 	$ihdr_chunk = $ihdr_chunk.pack("N2", ($ihdr->{"imagewidth"},
 		$ihdr->{"imageheight"}));
 	#FIXME: Support index of less than 8 bits
 	$ihdr_chunk = $ihdr_chunk.pack("C2", (8, 3)); #8 bit indexed colour
 	$ihdr_chunk = $ihdr_chunk.pack("C3", ($ihdr->{"compression"},
 		$ihdr->{"filter"}, $ihdr->{"interlace"}));
-	$ihdrcrc = crc32($ihdr_chunk);
+	my $ihdrcrc = crc32($ihdr_chunk);
 	$blobout = $blobout.$ihdr_chunk.pack("N", $ihdrcrc);
 	#now any chunk before the IDAT
-       	$searchindex =  16 + 13 + 4 + 4;
-	$pnglength = length($blobin);
-	$foundidat = 0;
+       	my $searchindex =  16 + 13 + 4 + 4;
+	my $pnglength = length($blobin);
+	my $foundidat = 0;
        	while ($searchindex < ($pnglength - 4))
 	{
        		#Copy the chunk
@@ -1740,8 +1681,7 @@ sub palettize {
 							$totallines,
 							\%colourlookup,
 							$paloutref,
-							$pal_chunk, $width,
-							$boxref);
+							$pal_chunk, $width);
 							if (!$colourlookup{
 								$colour}) {
 								$colourlookup
@@ -1781,10 +1721,10 @@ sub palettize {
 }
 
 sub analyze {
-	my ($blob, $chunk_desc, $chunk_text, $chunk_length, $chunk_crc);
+	my ($chunk_desc, $chunk_text, $chunk_length, $chunk_crc);
 	my ($crit_status, $pub_status, @chunk_array, $searchindex, $pnglength);
 	my ($chunk_crc_checked, $nextindex);
-	$blob = shift;
+	my $blob = shift;
 	#is it a PNG?
 	if (Image::Pngslimmer::ispng($blob) < 1){
 		#no it's not, so return a simple array stating so
