@@ -26,7 +26,7 @@ our @EXPORT = qw(
 	
 );
 
-our $VERSION = '0.26';
+our $VERSION = '0.27';
 
 sub checkcrc {
 	my $chunk = shift;
@@ -282,11 +282,10 @@ sub linebyline {
 	#analyze the data line by line
 	my ($count, $return_filtered, $filtertype);
 	my ($data, $ihdr)= @_;
-	my %ihdr = %{$ihdr};
-	my $width = $ihdr{"imagewidth"};
-	my $height = $ihdr{"imageheight"};
-	my $depth = $ihdr{"bitdepth"};
-	my $colourtype = $ihdr{"colourtype"};
+	my $width = $ihdr->{"imagewidth"};
+	my $height = $ihdr->{"imageheight"};
+	my $depth = $ihdr->{"bitdepth"};
+	my $colourtype = $ihdr->{"colourtype"};
 	if (($colourtype != 2)||($depth != 8)) {
 		return -1;
 	}
@@ -811,8 +810,7 @@ sub ispalettized {
 	my ($blobin, $ihdr);
 	$blobin = shift;
 	$ihdr = getihdr($blobin);
-	my %ihdr = %{$ihdr};
-	return 0 unless $ihdr{"colourtype"} == 3;
+	return 0 unless $ihdr->{"colourtype"} == 3;
 	return 1;
 }
 
@@ -1332,7 +1330,7 @@ sub getbiggestbox {
 
 sub sortonaxes {
 	my ($boundingref, $coloursref, $longestaxis, $lengthofaxis) = @_;
-	my (@colours, $x, %distances, $colshift);
+	my ($x, $colshift);
 	my @newcolours = @$coloursref;
 	#FIXME: This only works for 24 bit colour
 	if ($longestaxis == 2)
@@ -1342,6 +1340,7 @@ sub sortonaxes {
 		return \@newcolours;
 	}
 	$colshift = 0xFFFFFF >> (16 - ($longestaxis * 8));
+	my %distances;
 	keys (%distances) = scalar(@newcolours);
 	foreach $x (@newcolours)
 	{
@@ -1354,11 +1353,11 @@ sub sortonaxes {
 sub generate_box {
 	#convert colours to cartesian points
 	#and then return the bounding box
-	my ($x,$rd, $gn, $bl, $boundref);
 	if (scalar(@_) == 1) {
 		return [convert_toxyz(pop @_)];
 	}
 	my (@reds, @greens, @blues);
+	my ($x, $rd, $gn, $bl, $boundref);
 	foreach $x (@_)
 	{
 		($rd, $gn, $bl) = convert_toxyz($x);
@@ -1385,10 +1384,7 @@ sub getpalette {
 		$colours = $boxes[$x * 4 + 1];
 		my @colours = @$colours;
 		push @palette, getcolour_ave(\@colours);
-		foreach $z (@colours)
-		{
-			$lookup{$z} = $x;
-		}
+		foreach $z (@colours) { $lookup{$z} = $x }
 		my @boundaries = @{$boxes[$x * 4]};
 		if (scalar(@boundaries) > 3) {
 			#eliminate boxes with only
@@ -1493,17 +1489,16 @@ sub index_mediancut {
 sub dither {
 	#implement Floyd - Steinberg error diffusion dither
 	my ($linelength, $rcomp, $gcomp, $bcomp, $palnumber);
-	my ($rp, $rg, $rb, @colerror, $max_value, $currentoffset_w);
-	my ($currentoffset_h, $nextoffset_h, $ll, @boxes, $checkup, @colref);
+	my ($rp, $rg, $rb, $max_value, $currentoffset_w);
+	my ($currentoffset_h, $nextoffset_h, $ll);
 
 	my ($colour, $unfiltereddata, $cdepth, $ndepth, $linesdone,
 		$pixelpoint, $totallines, $pallookref, $paloutref,
 		$pal_chunk, $width, $boxref) = @_;
 	$linelength = $width * $cdepth + 1;
 	#FIXME not just 24 bit depth
-	my %colourlookup = %$pallookref;
-	$palnumber = $colourlookup{$colour};
 	($rcomp, $gcomp, $bcomp) = convert_toxyz($colour);
+	$palnumber = $pallookref->{$colour};
 	if (!$palnumber) {
 		$palnumber = match_dither($rcomp, $gcomp, $bcomp, $boxref);
 		unless ($palnumber) {
@@ -1513,9 +1508,7 @@ sub dither {
 
 	($rp, $rg, $rb) = unpack("C3", substr($pal_chunk, $palnumber * 3, 3));
 	#calculate the errors
-	$colerror[0] = $rcomp - $rp;
-	$colerror[1] = $gcomp - $rg;
-	$colerror[2] = $bcomp - $rb;
+	my @colerror = ($rcomp - $rp, $gcomp - $rg, $bcomp - $rb);
 	#now diffuse the errors
 	if ($cdepth >= 6) {
 		$max_value = 0xFFFF;
@@ -1954,9 +1947,8 @@ author can process images at about 30 - 50KB per second - meaning it can be
 used for J2ME in "real time" but is likely to be too slow for many other
 dynamic uses. Setting $colourlimit between 1 and 255 allows control over the
 size of the generated palette (the default is 0 which generates a 256 colour
-palette). Setting $dither to 1 will turn on the EXTREMELY SLOW (a 150k image
-takes over three hours on the author's machine) dithering. It is not
-recommended.
+palette). Setting $dither to 1 will turn on the much slower dithering. It is
+not recommended for anything that requires quick image display.
 
 $hashref  = Image::Pngslimmer::reportcolours($blob) will return a reference to
 a hash with a frequency table of the colours in the image.
