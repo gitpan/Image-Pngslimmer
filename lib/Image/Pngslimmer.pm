@@ -26,7 +26,7 @@ our @EXPORT = qw(
 	
 );
 
-our $VERSION = '0.28';
+our $VERSION = '0.29';
 
 sub checkcrc {
 	my $chunk = shift;
@@ -1284,19 +1284,13 @@ sub getaxis_details {
 
 sub getbiggestbox {
 	#return the index to the biggest box
-	my ($x, $i, %indices);
-	my ($z, $counter, $biggest);
-	my $boxesin = shift;
-	my $n = shift; 
+	my ($boxesin, $n) = @_;
+	my %indices;
 	keys(%indices) = $n;
-	$z = 0;
-	$counter = 0;
-	$biggest = 0;
-	for ($i = 0; $i < $n; $i++)
+	for (my $i = 0; $i < $n; $i++)
 	{
 		#length is 4th item per box
-		$counter = $i * 4 + 3;
-		$indices{$i} = $boxesin->[$counter];
+		$indices{$i} = $boxesin->[$i * 4 + 3];
 	}
 	my @sortedlen = sort {$indices{$b} <=> $indices{$a}} keys %indices;
 	return (shift @sortedlen);
